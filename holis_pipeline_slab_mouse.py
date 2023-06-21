@@ -35,8 +35,8 @@ from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 
 DATA_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/omezarr/nuclei.omehans'
 OUTPUT_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/output'
-DEEPBLINK_CHUNK_SIZE = (40, 1700, 1700)
-DEEPBLINK_MODEL_PATH = '/bil/proj/rf1hillman/data_omezarr/deepblink_particle.h5'
+PYTORCH_CHUNK_SIZE = (40, 1700, 1700)
+PYTORCH_MODEL_PATH = '/bil/proj/rf1hillman/pynet/centroids_v1_128_pruned_norm_scaled_oneVol/model.pth'  # TODO
 signal_channel = 0
 resolution_level = 0
 RESOLUTION = [1.34, 1.54, 2.0]
@@ -57,20 +57,15 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def launch_deepblink(model_path, img_path):
-    cmd = [
-        'deepblink', 'predict', '--model', model_path, '--input', img_path
-    ]
-    ret = subprocess.run(cmd)
-
-
-def write_deepblink_task_for_slurm(img_path, output_path):
+def write_detection_task_for_slurm(img_path, output_path):
     with open(output_path, 'w') as f:
         f.write('#!/bin/bash\n')
         f.write('module load miniconda3\n')
-        f.write('source activate deepblink')
+        f.write('source activate holis-pytorch')  # TODO
         f.write('\n')
-        f.write(f'deepblink predict --model {DEEPBLINK_MODEL_PATH} --input ')
+        f.write(f'python /bil/proj/rf1hillman/code/unet_pytorch_predict_w_patchify_2.py ')  # TODO
+        f.write(PYTORCH_MODEL_PATH)
+        f.write(' ')
         f.write(img_path)
         f.write('\n')
 
@@ -352,10 +347,10 @@ def main():
         os.makedirs(jobs_folder)
 
     print("Chunks folder", chunks_folder)
-    ratios = (np.array(lazy_tiff_stack.shape) / np.array(DEEPBLINK_CHUNK_SIZE)).astype('int') + 1
-    patchify_chunks_shape = (*list(ratios), *DEEPBLINK_CHUNK_SIZE)
-    origin_coords = get_origin_coords(3, patchify_chunks_shape, DEEPBLINK_CHUNK_SIZE)
-    chunk_indices = get_chunk_indices(origin_coords, DEEPBLINK_CHUNK_SIZE)
+    ratios = (np.array(lazy_tiff_stack.shape) / np.array(PYTORCH_CHUNK_SIZE)).astype('int') + 1
+    patchify_chunks_shape = (*list(ratios), *PYTORCH_CHUNK_SIZE)
+    origin_coords = get_origin_coords(3, patchify_chunks_shape, PYTORCH_CHUNK_SIZE)
+    chunk_indices = get_chunk_indices(origin_coords, PYTORCH_CHUNK_SIZE)
 
     yx_ratio = float(RESOLUTION[-1]) / RESOLUTION[-2]  # make resolution isotropic, equal y resolution (only for spot detection)
     yz_ratio = float(RESOLUTION[-3]) / RESOLUTION[-2]  # make resolution isotropic, equal y resolution (only for spot detection)
