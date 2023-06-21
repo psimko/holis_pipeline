@@ -1,4 +1,6 @@
 """
+Pipeline for the combinatorial mouse slab
+
 1) napari_apoc segmentation with existing model (done at CBI)
 2) Compute bg chunks, save their numbers (done at CBI)
 3) compute chunks with bright spots, save their numbers (done at CBI)
@@ -29,14 +31,15 @@ import dask.array as da
 import zarr
 from skimage.transform import resize
 from stack_to_multiscale_ngff.archived_nested_store import Archived_Nested_Store
+from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 
-DATA_DIR = '/bil/proj/rf1hillman/data_omezarr/2023_01_22_combinatorialSlide_humanBrain2_tiff_Alan/nuclei'
-OUTPUT_DIR = f'/bil/proj/rf1hillman/data_omezarr/2023_01_22_combinatorialSlide_humanBrain2_tiff_Alan_output'
+DATA_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/omezarr/nuclei.omehans'
+OUTPUT_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/output'
 DEEPBLINK_CHUNK_SIZE = (40, 1700, 1700)
 DEEPBLINK_MODEL_PATH = '/bil/proj/rf1hillman/data_omezarr/deepblink_particle.h5'
 signal_channel = 0
 resolution_level = 0
-RESOLUTION = [0.388, 0.44, 2.0]
+RESOLUTION = [1.34, 1.54, 2.0]
 
 file_handler = logging.FileHandler(
     os.path.join(
@@ -81,7 +84,7 @@ def detect_cells_deepblink_slurm(chunk_numbers, chunks_folder, jobs_folder):
     for chunk_number in chunk_numbers:
         chunk_file = os.path.join(chunks_folder, f"chunk_{str(chunk_number).zfill(5)}.tif")
         print("chunk_file", chunk_file)
-        if os.path.exists(chunk_file.replace('tif', 'csv')):
+        if os.path.exists(chunk_file.replace('.tif', '.csv')):
             print(f"Skipping chunk {chunk_number}")
             continue
         print(f"Submitting gpu task for chunk {chunk_number}")
@@ -235,7 +238,7 @@ def write_spectral_extraction_script_for_slurm(chunk_file, task_path):
         f.write('module load miniconda3\n')
         f.write('source activate deepblink')
         f.write('\n')
-        f.write('python /bil/proj/rf1hillman/code/holis_get_chunk_spectral_info_slab_human.py ')
+        f.write('python /bil/proj/rf1hillman/code/holis_get_chunk_spectral_info_slab_mouse_large.py ')
         f.write(chunk_file)
         f.write(' ')
         f.write(DATA_DIR)
@@ -262,7 +265,7 @@ def write_chunk_extraction_script_for_slurm(chunk_file, task_path):
         f.write('module load miniconda3\n')
         f.write('source activate deepblink')
         f.write('\n')
-        f.write('python /bil/proj/rf1hillman/code/holis_extract_resized_chunk_slab_human.py ')
+        f.write('python /bil/proj/rf1hillman/code/holis_extract_resized_chunk_slab_mouse_large.py ')
         f.write(chunk_file)
         f.write(' ')
         f.write(DATA_DIR)
@@ -275,7 +278,7 @@ def write_chunk_inpainting_script_for_slurm(chunk_file, task_path):
         f.write('module load miniconda3\n')
         f.write('source activate deepblink')
         f.write('\n')
-        f.write('python /bil/proj/rf1hillman/code/holis_extract_resized_inpainted_chunk_slab_human.py ')
+        f.write('python /bil/proj/rf1hillman/code/holis_extract_resized_inpainted_chunk_slab_mouse_large.py ')
         f.write(chunk_file)
         f.write(' ')
         f.write(DATA_DIR)
@@ -324,7 +327,7 @@ def merge_spectral_info_df(origin_coords, bg_chunks):
     df = pd.concat(to_merge, ignore_index=True)
     print("Concatenated. Saving")
     # save new df
-    df.to_csv(os.path.join(OUTPUT_DIR, "scale_0", "detected_cells_particle_dbscan_bg_removed_new_um_w_color_info.csv"))
+    df.to_csv(os.path.join(OUTPUT_DIR, "scale_0", "detected_cells_particle_dbscan_bg_removed_um_w_color_info.csv"))
     return df
 
 
@@ -334,7 +337,7 @@ def main():
     log.info(f"START TIME: {tstart}")
 
     location = os.path.join(DATA_DIR, f'scale{resolution_level}')
-    store = Archived_Nested_Store(location)
+    store = H5_Nested_Store(location)
     zarray = zarr.open(store)
     dask_zarray = da.array(zarray)
     lazy_tiff_stack = dask_zarray[0, signal_channel, :, :, :]

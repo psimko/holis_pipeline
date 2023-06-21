@@ -11,6 +11,7 @@ import zarr
 from skimage.transform import resize
 from sklearn.cluster import DBSCAN
 from stack_to_multiscale_ngff.archived_nested_store import Archived_Nested_Store
+from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 
 
 def get_origin_coords(ndim, patchify_chunks_shape, chunk_size):
@@ -69,7 +70,7 @@ def run_dbscan_on_chunk(df):
     points = df[["axis-0", "axis-1", "axis-2"]].to_numpy()
     print("Points shape", points.shape)
 
-    eps = 10
+    eps = 2
     min_samples = 1
 
     # create a DBSCAN object
@@ -320,12 +321,12 @@ dbscan_folder = os.path.join(str(Path(chunks_folder).parent), "dbscan")
 if not os.path.exists(dbscan_folder):
     os.makedirs(dbscan_folder)
 DEEPBLINK_CHUNK_SIZE = (40, 1700, 1700)
-RESOLUTION = [0.388, 0.44, 2.0]
+RESOLUTION = [1.34, 1.54, 2.0]
 xy_factor = float(RESOLUTION[-1]) / RESOLUTION[-2]
 zy_factor = float(RESOLUTION[-3]) / RESOLUTION[-2]
 number = int(re.findall(r"\d+", os.path.basename(chunk_file))[-1])
 location = os.path.join(DATA_DIR, 'scale0')
-store = Archived_Nested_Store(location)
+store = H5_Nested_Store(location)
 zarray = zarr.open(store)
 dask_zarray = da.array(zarray)
 lazy_tiff_stack = dask_zarray[0, 0, :, :, :]
@@ -339,11 +340,11 @@ lazy_data = dask_zarray[0, 1:, :, :, :]
 nuclei_box_size = np.round(10 / np.array(RESOLUTION)).astype(int)  # 10 um box
 ind = chunk_indices[number]
 
-color_info_location = "/bil/proj/rf1hillman/data_omezarr/2023_01_22_combinatorialSlide_humanBrain2_tiff_Alan/scale0"
-color_info_store = Archived_Nested_Store(color_info_location)
+color_info_location = "/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/omezarr/colors.omehans/scale0"
+color_info_store = H5_Nested_Store(color_info_location)
 color_info_zarray = zarr.open(color_info_store)
 color_info_shape = color_info_zarray.shape[-3:]
-color_info_resolution = [0.618, 0.7, 2.0]
+color_info_resolution = [1.34, 1.54, 2.0]
 color_info_box_size = np.round(10 / np.array(color_info_resolution)).astype(int)  # 10 um box
 print("Box size", color_info_box_size)
 

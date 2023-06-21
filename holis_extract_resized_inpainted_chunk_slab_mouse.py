@@ -10,6 +10,7 @@ import tifffile
 import zarr
 from skimage.transform import resize
 from stack_to_multiscale_ngff.archived_nested_store import Archived_Nested_Store
+from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 
 
 def get_origin_coords(ndim, patchify_chunks_shape, chunk_size):
@@ -58,22 +59,23 @@ def process_chunk(ind):
             (int(round(chunk.shape[0] * yz_ratio)), chunk.shape[1], int(round(chunk.shape[2] * yx_ratio)))
         ) * 65535
     ).astype("uint16")
+    mask = tifffile.imread(os.path.join(low_res_mask_folder, os.path.basename(chunk_file)))
+    mask = resize(mask, chunk.shape)
+    chunk[mask == 0] = np.median(chunk[mask == 1])
     tifffile.imwrite(chunk_file, chunk)
-    # tifffile.imwrite(os.path.join(output_folder, f"chunk_{str(number).zfill(5)}.tif"), chunk)
 
 
 chunk_file = sys.argv[1]
 DATA_DIR = sys.argv[2]
 chunks_folder = str(Path(chunk_file).parent)
-if not os.path.exists(chunks_folder):
-    os.makedirs(chunks_folder)
+OUT_DIR = str(Path(chunks_folder).parent.parent)
 DEEPBLINK_CHUNK_SIZE = (40, 1700, 1700)
-RESOLUTION = [0.388, 0.44, 2.0]
+RESOLUTION = [1.34, 1.54, 2.0]
 yx_ratio = float(RESOLUTION[-1]) / RESOLUTION[-2]
 yz_ratio = float(RESOLUTION[-3]) / RESOLUTION[-2]
 number = int(re.findall(r"\d+", os.path.basename(chunk_file))[-1])
 location = os.path.join(DATA_DIR, 'scale0')
-store = Archived_Nested_Store(location)
+store = H5_Nested_Store(location)
 zarray = zarr.open(store)
 dask_zarray = da.array(zarray)
 lazy_tiff_stack = dask_zarray[0, 0, :, :, :]
@@ -83,4 +85,6 @@ origin_coords = get_origin_coords(3, patchify_chunks_shape, DEEPBLINK_CHUNK_SIZE
 chunk_indices = get_chunk_indices(origin_coords, DEEPBLINK_CHUNK_SIZE)
 lazy_data = dask_zarray[0, 0, :, :, :]
 ind = chunk_indices[number]
+low_res_folder = os.path.join(OUT_DIR, "scale_4")
+low_res_mask_folder = os.path.join(low_res_folder, "bright_spots_mask_resized")
 process_chunk(ind)
