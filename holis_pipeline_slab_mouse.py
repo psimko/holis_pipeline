@@ -34,12 +34,14 @@ from stack_to_multiscale_ngff.archived_nested_store import Archived_Nested_Store
 from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 
 DATA_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/omezarr/nuclei.omehans'
-OUTPUT_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/output'
+OUTPUT_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/output/pytorch_unet/'
 PYTORCH_CHUNK_SIZE = (40, 1700, 1700)
 PYTORCH_MODEL_PATH = '/bil/proj/rf1hillman/pynet/centroids_v1_128_pruned_norm_scaled_oneVol/model.pth'  # TODO
 signal_channel = 0
 resolution_level = 0
 RESOLUTION = [1.34, 1.54, 2.0]
+work_dir = os.getcwd()
+print("Working directory: ", work_dir)
 
 file_handler = logging.FileHandler(
     os.path.join(
@@ -63,7 +65,7 @@ def write_detection_task_for_slurm(img_path, output_path):
         f.write('module load miniconda3\n')
         f.write('source activate holis-pytorch')  # TODO
         f.write('\n')
-        f.write(f'python /bil/proj/rf1hillman/code/unet_pytorch_predict_w_patchify_2.py ')  # TODO
+        f.write(f'python {work_dir}/predict_w_patchify_2.py ')  # TODO
         f.write(PYTORCH_MODEL_PATH)
         f.write(' ')
         f.write(img_path)
@@ -233,7 +235,7 @@ def write_spectral_extraction_script_for_slurm(chunk_file, task_path):
         f.write('module load miniconda3\n')
         f.write('source activate deepblink')
         f.write('\n')
-        f.write('python /bil/proj/rf1hillman/code/holis_get_chunk_spectral_info_slab_mouse_large.py ')
+        f.write(f'python {work_dir}/holis_get_chunk_spectral_info_slab_mouse.py ')
         f.write(chunk_file)
         f.write(' ')
         f.write(DATA_DIR)
@@ -260,7 +262,7 @@ def write_chunk_extraction_script_for_slurm(chunk_file, task_path):
         f.write('module load miniconda3\n')
         f.write('source activate deepblink')
         f.write('\n')
-        f.write('python /bil/proj/rf1hillman/code/holis_extract_resized_chunk_slab_mouse_large.py ')
+        f.write(f'python {work_dir}/holis_extract_resized_chunk_slab_mouse.py ')
         f.write(chunk_file)
         f.write(' ')
         f.write(DATA_DIR)
@@ -273,7 +275,7 @@ def write_chunk_inpainting_script_for_slurm(chunk_file, task_path):
         f.write('module load miniconda3\n')
         f.write('source activate deepblink')
         f.write('\n')
-        f.write('python /bil/proj/rf1hillman/code/holis_extract_resized_inpainted_chunk_slab_mouse_large.py ')
+        f.write(f'python {work_dir}/holis_extract_resized_inpainted_chunk_slab_mouse.py ')
         f.write(chunk_file)
         f.write(' ')
         f.write(DATA_DIR)
@@ -322,7 +324,7 @@ def merge_spectral_info_df(origin_coords, bg_chunks):
     df = pd.concat(to_merge, ignore_index=True)
     print("Concatenated. Saving")
     # save new df
-    df.to_csv(os.path.join(OUTPUT_DIR, "scale_0", "detected_cells_particle_dbscan_bg_removed_um_w_color_info.csv"))
+    df.to_csv(os.path.join(OUTPUT_DIR, "scale_0", "detected_cells_pytorch_unet_bg_removed_um_w_color_info.csv"))
     return df
 
 
@@ -457,7 +459,7 @@ def main():
     # drop columns with spectral info
     df = df[['axis-0', 'axis-1', 'axis-2']]
     # save df with just the coordinates
-    df.to_csv(os.path.join(OUTPUT_DIR, "scale_0", "detected_cells_particle_dbscan_bg_removed_new_um.csv"))
+    df.to_csv(os.path.join(OUTPUT_DIR, "scale_0", "detected_cells_pytorch_unet_bg_removed_new_um.csv"))
 
 
 if __name__ == "__main__":
