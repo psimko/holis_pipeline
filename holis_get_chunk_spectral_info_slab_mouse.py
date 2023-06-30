@@ -172,12 +172,8 @@ def process_chunk(chunk_file, number):
     nuclei_chunk = zarray[0, 0, ind[0], ind[1], ind[2]]
     napari_csv = os.path.join(os.path.dirname(chunk_file), f"napari_{os.path.basename(chunk_file).replace('.tif', '.csv')}")
     points_df = pd.read_csv(napari_csv)
-    dbscan_df = run_dbscan_on_chunk(points_df)
-    dbscan_df = dbscan_df[["axis-0", "axis-1", "axis-2"]]
-    dbscan_df.to_csv(os.path.join(dbscan_folder, f"dbscan_chunk_{str(number).zfill(5)}.csv"))
-
-    # read all points from the file
-    points = dbscan_df.to_numpy()
+    points_df = points_df[["axis-0", "axis-1", "axis-2"]]
+    points = points_df.to_numpy()
     print("Points", points.shape)
     nuclei_chunk_shape = [
         int(round(nuclei_chunk.shape[0] * zy_factor)), nuclei_chunk.shape[1], int(round(nuclei_chunk.shape[2] * xy_factor))

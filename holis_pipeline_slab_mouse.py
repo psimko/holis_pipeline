@@ -1,15 +1,16 @@
 """
-Pipeline for the combinatorial mouse slab
+Pipeline for the combinatorial mouse slab.
+
+Uses Pytorch UNet with a model trained on mouse data.
 
 1) napari_apoc segmentation with existing model (done at CBI)
 2) Compute bg chunks, save their numbers (done at CBI)
 3) compute chunks with bright spots, save their numbers (done at CBI)
 4) extract good fg chunks, resize them (with slurm)
 5) extract and inpaint fg chunks that have bright spots (with slurm)
-6) run deepblink on all chunks
-7) convert coords to napari format and run dbscan
-8) get spectral information
-9) save giant dataframe
+6) run pytorch unet on all chunks
+7) get spectral information
+8) save giant dataframe
 
 requirements to run @ BIL:
 put the .npy files for background chunks and bright chunks in the output folder
@@ -34,9 +35,9 @@ from stack_to_multiscale_ngff.archived_nested_store import Archived_Nested_Store
 from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 
 DATA_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/omezarr/nuclei.omehans'
-OUTPUT_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/output/pytorch_unet/'
+OUTPUT_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/output/pytorch_unet_mouse_model/'
 PYTORCH_CHUNK_SIZE = (40, 1700, 1700)
-PYTORCH_MODEL_PATH = '/bil/proj/rf1hillman/pynet/centroids_v1_128_pruned_norm_scaled_oneVol/model.pth'  # TODO
+PYTORCH_MODEL_PATH = '/bil/proj/rf1hillman/pynet/segmentation_combMouse_128_oneVolume_v1/model.pth'  # mouse model
 signal_channel = 0
 resolution_level = 0
 RESOLUTION = [1.34, 1.54, 2.0]
