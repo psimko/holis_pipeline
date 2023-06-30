@@ -87,7 +87,7 @@ def detect_cells_deepblink_slurm(chunk_numbers, chunks_folder, jobs_folder):
             continue
         print(f"Submitting gpu task for chunk {chunk_number}")
         task_path = os.path.join(jobs_folder, f"detect_chunk_{str(chunk_number).zfill(5)}.sh")
-        write_deepblink_task_for_slurm(chunk_file, task_path)
+        write_detection_task_for_slurm(chunk_file, task_path)
         submit_slurm_task_gpu(task_path)
 
 
