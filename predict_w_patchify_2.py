@@ -86,7 +86,7 @@ stack = tifffile.imread(chunk_file).astype('float32')
 print(stack.shape)
 
 # preprocess chunk
-stack = normalize_image_stack(stack)
+# stack = normalize_image_stack(stack)
 
 volume_size = stack.shape
 patch_size = (128, 128, 128)
@@ -112,6 +112,7 @@ def prediction(model, padded_stack, patch_size):
         for j in range(0, padded_stack.shape[1], patch_size[1]):
             for k in range(0, padded_stack.shape[2], patch_size[2]):
                 single_patch = padded_stack[i:i+patch_size[0],j:j+patch_size[1],k:k+patch_size[2]]
+                single_patch = normalize_image_stack(single_patch)
                 # Apply ToTensor() transform
                 #transform = ToTensor()
                 #stack_tensor = transform(single_patch)
