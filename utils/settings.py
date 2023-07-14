@@ -6,3 +6,5 @@ MODEL_PATH = '/bil/proj/rf1hillman/pynet/segmentation_combMouse_128_oneVolume_v1
 NUCLEI_RESOLUTION = [1.34, 1.54, 2.0]  # nuclei
 COLOR_RESOLUTION = [1.34, 1.54, 2.0]
 CUBE_SIZE = 10  # um to cut around nuclei
+GPU_ENV_NAME = 'holis-pytorch'
+LNODE_ENV_NAME = 'deepblink'

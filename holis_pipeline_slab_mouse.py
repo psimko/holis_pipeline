@@ -62,7 +62,7 @@ def write_detection_task_for_slurm(img_path, output_path):
     with open(output_path, 'w') as f:
         f.write('#!/bin/bash\n')
         f.write('module load miniconda3\n')
-        f.write('source activate holis-pytorch')  # TODO
+        f.write(f'source activate {GPU_ENV_NAME}')
         f.write('\n')
         f.write(f'python {work_dir}/predict_w_patchify_2.py ')  # TODO
         f.write(MODEL_PATH)
@@ -259,7 +259,7 @@ def write_chunk_extraction_script_for_slurm(chunk_file, task_path):
     with open(task_path, 'w') as f:
         f.write('#!/bin/bash\n')
         f.write('module load miniconda3\n')
-        f.write('source activate deepblink')
+        f.write(f'source activate {LNODE_ENV_NAME}')
         f.write('\n')
         f.write(f'python {work_dir}/holis_extract_resized_chunk_slab_mouse.py ')
         f.write(chunk_file)
@@ -272,7 +272,7 @@ def write_chunk_inpainting_script_for_slurm(chunk_file, task_path):
     with open(task_path, 'w') as f:
         f.write('#!/bin/bash\n')
         f.write('module load miniconda3\n')
-        f.write('source activate deepblink')
+        f.write(f'source activate {LNODE_ENV_NAME}')
         f.write('\n')
         f.write(f'python {work_dir}/holis_extract_resized_inpainted_chunk_slab_mouse.py ')
         f.write(chunk_file)
