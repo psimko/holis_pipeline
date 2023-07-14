@@ -34,13 +34,11 @@ from skimage.transform import resize
 from stack_to_multiscale_ngff.archived_nested_store import Archived_Nested_Store
 from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 
-DATA_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/omezarr/nuclei.omehans'
-OUTPUT_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/output/pytorch_unet_mouse_model/'
-PYTORCH_CHUNK_SIZE = (40, 1700, 1700)
-PYTORCH_MODEL_PATH = '/bil/proj/rf1hillman/pynet/segmentation_combMouse_128_oneVolume_v1/model.pth'  # mouse model
+from utils.settings import *
+
+
 signal_channel = 0
 resolution_level = 0
-RESOLUTION = [1.34, 1.54, 2.0]
 work_dir = os.getcwd()
 print("Working directory: ", work_dir)
 

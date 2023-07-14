@@ -12,6 +12,8 @@ from skimage.transform import resize
 from stack_to_multiscale_ngff.archived_nested_store import Archived_Nested_Store
 from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 
+from utils.settings import *
+
 
 def get_origin_coords(ndim, patchify_chunks_shape, chunk_size):
     """
@@ -69,8 +71,8 @@ chunk_file = sys.argv[1]
 DATA_DIR = sys.argv[2]
 chunks_folder = str(Path(chunk_file).parent)
 OUT_DIR = str(Path(chunks_folder).parent.parent)
-DEEPBLINK_CHUNK_SIZE = (40, 1700, 1700)
-RESOLUTION = [1.34, 1.54, 2.0]
+# DEEPBLINK_CHUNK_SIZE = (40, 1700, 1700)
+# RESOLUTION = [1.34, 1.54, 2.0]
 yx_ratio = float(RESOLUTION[-1]) / RESOLUTION[-2]
 yz_ratio = float(RESOLUTION[-3]) / RESOLUTION[-2]
 number = int(re.findall(r"\d+", os.path.basename(chunk_file))[-1])
