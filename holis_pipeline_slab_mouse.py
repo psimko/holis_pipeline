@@ -79,8 +79,8 @@ def submit_slurm_task_gpu(path_to_task):
 def detect_cells_deepblink_slurm(chunk_numbers, chunks_folder, jobs_folder):
     for chunk_number in chunk_numbers:
         chunk_file = os.path.join(chunks_folder, f"chunk_{str(chunk_number).zfill(5)}.tif")
-        print("chunk_file", chunk_file)
-        if os.path.exists(chunk_file.replace('.tif', '.csv')):
+        detections_file_name = os.path.join(os.path.dirname(chunk_file), f"napari_{os.path.basename(chunk_file).replace('.tif', '.csv')}")
+        if os.path.exists(detections_file_name):
             print(f"Skipping chunk {chunk_number}")
             continue
         print(f"Submitting gpu task for chunk {chunk_number}")
