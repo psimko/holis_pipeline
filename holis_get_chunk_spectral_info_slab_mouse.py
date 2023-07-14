@@ -13,6 +13,8 @@ from sklearn.cluster import DBSCAN
 from stack_to_multiscale_ngff.archived_nested_store import Archived_Nested_Store
 from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 
+from utils.settings import *
+
 
 def get_origin_coords(ndim, patchify_chunks_shape, chunk_size):
     """
@@ -148,7 +150,7 @@ def remove_background_spots(points, nuclei_chunk_shape):
     print("Converting to binary", cells_binary.shape)
     np.put(cells_binary, np.ravel_multi_index(detected_cells_np.T, nuclei_chunk_shape), 1)
     print("Multiplying by mask")
-    mask_folder = os.path.join(str(Path(spectral_info_folder).parent.parent), 'scale_4', 'mask_resized')
+    mask_folder = os.path.join(str(Path(spectral_info_folder).parent.parent), 'scale_x', 'mask_resized')
     mask_stack = tifffile.imread(os.path.join(mask_folder, f"chunk_{str(number).zfill(5)}.tif"))
     mask_stack = resize(mask_stack, nuclei_chunk_shape)
     cells_filtered = cells_binary * mask_stack
@@ -200,9 +202,9 @@ def process_chunk(chunk_file, number):
     points_absolute[:, 1] = points[:, 1] + chunk_origin[1]
     points_absolute[:, 2] = points[:, 2] + chunk_origin[2]
     points_um = np.empty_like(points_absolute)
-    points_um[:, 0] = points_absolute[:, 0] * RESOLUTION[0]  # nuclei channel
-    points_um[:, 1] = points_absolute[:, 1] * RESOLUTION[1]
-    points_um[:, 2] = points_absolute[:, 2] * RESOLUTION[2]
+    points_um[:, 0] = points_absolute[:, 0] * NUCLEI_RESOLUTION[0]  # nuclei channel
+    points_um[:, 1] = points_absolute[:, 1] * NUCLEI_RESOLUTION[1]
+    points_um[:, 2] = points_absolute[:, 2] * NUCLEI_RESOLUTION[2]
     print("=====points_um", points_um.dtype)
 
     z_min_um = np.min(points_um[:, 0])  # both channels
@@ -214,22 +216,22 @@ def process_chunk(chunk_file, number):
     print("Z limits um", z_min_um, z_max_um)
     print("Y limits um", y_min_um, y_max_um)
     print("X limits um", x_min_um, x_max_um)
-    color_info_z_min_px = int(round(z_min_um / color_info_resolution[0] - color_info_box_size[0] // 2))
+    color_info_z_min_px = int(round(z_min_um / COLOR_RESOLUTION[0] - color_info_box_size[0] // 2))
     if color_info_z_min_px < 0:
         color_info_z_min_px = 0
-    color_info_z_max_px = int(round(z_max_um / color_info_resolution[0] + color_info_box_size[0] // 2 + 1))  # TODO check
+    color_info_z_max_px = int(round(z_max_um / COLOR_RESOLUTION[0] + color_info_box_size[0] // 2 + 1))  # TODO check
     if color_info_z_max_px > (color_info_shape[0] - 1):
         color_info_z_max_px = color_info_shape[0] - 1
-    color_info_y_min_px = int(round(y_min_um / color_info_resolution[1] - color_info_box_size[1] // 2))
+    color_info_y_min_px = int(round(y_min_um / COLOR_RESOLUTION[1] - color_info_box_size[1] // 2))
     if color_info_y_min_px < 0:
         color_info_y_min_px = 0
-    color_info_y_max_px = int(round(y_max_um / color_info_resolution[1] + color_info_box_size[1] // 2 + 1))  # TODO check
+    color_info_y_max_px = int(round(y_max_um / COLOR_RESOLUTION[1] + color_info_box_size[1] // 2 + 1))  # TODO check
     if color_info_y_max_px > (color_info_shape[1] - 1):
         color_info_y_max_px = color_info_shape[1] - 1
-    color_info_x_min_px = int(round(x_min_um / color_info_resolution[2] - color_info_box_size[2] // 2))
+    color_info_x_min_px = int(round(x_min_um / COLOR_RESOLUTION[2] - color_info_box_size[2] // 2))
     if color_info_x_min_px < 0:
         color_info_x_min_px = 0
-    color_info_x_max_px = int(round(x_max_um / color_info_resolution[2] + color_info_box_size[2] // 2 + 1))  # TODO check
+    color_info_x_max_px = int(round(x_max_um / COLOR_RESOLUTION[2] + color_info_box_size[2] // 2 + 1))  # TODO check
     if color_info_x_max_px > (color_info_shape[2] - 1):
         color_info_x_max_px = color_info_shape[2] - 1
     print("Z limits px", color_info_z_min_px, color_info_z_max_px)
@@ -244,7 +246,7 @@ def process_chunk(chunk_file, number):
     ]
     color_info_chunk_origin = [color_info_z_min_px, color_info_y_min_px, color_info_x_min_px]
     averages = []  # 4 colors
-    dimensions_um = list(np.array(color_info_shape) * np.array(color_info_resolution))
+    dimensions_um = list(np.array(color_info_shape) * np.array(COLOR_RESOLUTION))
     print("Color channels dimensions um", dimensions_um)
     failed_point_indices = []
     for ip, point_um in enumerate(list(points_um)):
@@ -258,7 +260,7 @@ def process_chunk(chunk_file, number):
             continue
         try:
             # convert point to pixels (absolute) in color channels space
-            point_px = np.round((point_um / np.array(color_info_resolution))).astype(int)  # color channels
+            point_px = np.round((point_um / np.array(COLOR_RESOLUTION))).astype(int)  # color channels
             if np.any(point_px < 0):
                 raise RuntimeError("Negative coordinates")
             # get point coords relative to chunk origin
@@ -308,7 +310,7 @@ def process_chunk(chunk_file, number):
     spectral_df.to_csv(os.path.join(spectral_info_folder, f"spectral_chunk_{str(number).zfill(5)}.csv"))
 
 
-DATA_DIR = sys.argv[2]
+NUCLEI_DIR = sys.argv[2]
 chunk_file = sys.argv[1]
 chunks_folder = str(Path(chunk_file).parent)
 spectral_info_folder = os.path.join(str(Path(chunks_folder).parent), "spectral_info")
@@ -317,32 +319,28 @@ if not os.path.exists(spectral_info_folder):
 dbscan_folder = os.path.join(str(Path(chunks_folder).parent), "dbscan")
 if not os.path.exists(dbscan_folder):
     os.makedirs(dbscan_folder)
-DEEPBLINK_CHUNK_SIZE = (40, 1700, 1700)
-RESOLUTION = [1.34, 1.54, 2.0]
-xy_factor = float(RESOLUTION[-1]) / RESOLUTION[-2]
-zy_factor = float(RESOLUTION[-3]) / RESOLUTION[-2]
+xy_factor = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
+zy_factor = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
 number = int(re.findall(r"\d+", os.path.basename(chunk_file))[-1])
-location = os.path.join(DATA_DIR, 'scale0')
+location = os.path.join(NUCLEI_DIR, 'scale0')
 store = H5_Nested_Store(location)
 zarray = zarr.open(store)
 dask_zarray = da.array(zarray)
 lazy_tiff_stack = dask_zarray[0, 0, :, :, :]
-nuclei_dimensions_um = np.array(lazy_tiff_stack.shape) * np.array(RESOLUTION)
+nuclei_dimensions_um = np.array(lazy_tiff_stack.shape) * np.array(NUCLEI_RESOLUTION)
 print("Nuclei channel dimensions um", nuclei_dimensions_um)
-ratios = (np.array(lazy_tiff_stack.shape) / np.array(DEEPBLINK_CHUNK_SIZE)).astype('int') + 1
-patchify_chunks_shape = (*list(ratios), *DEEPBLINK_CHUNK_SIZE)
-origin_coords = get_origin_coords(3, patchify_chunks_shape, DEEPBLINK_CHUNK_SIZE)
-chunk_indices = get_chunk_indices(origin_coords, DEEPBLINK_CHUNK_SIZE)
+ratios = (np.array(lazy_tiff_stack.shape) / np.array(CHUNK_SIZE)).astype('int') + 1
+patchify_chunks_shape = (*list(ratios), *CHUNK_SIZE)
+origin_coords = get_origin_coords(3, patchify_chunks_shape, CHUNK_SIZE)
+chunk_indices = get_chunk_indices(origin_coords, CHUNK_SIZE)
 lazy_data = dask_zarray[0, 1:, :, :, :]
-nuclei_box_size = np.round(10 / np.array(RESOLUTION)).astype(int)  # 10 um box
+nuclei_box_size = np.round(CUBE_SIZE / np.array(NUCLEI_RESOLUTION)).astype(int)  # 10 um box
 ind = chunk_indices[number]
 
-color_info_location = "/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/omezarr/colors.omehans/scale0"
-color_info_store = H5_Nested_Store(color_info_location)
+color_info_store = H5_Nested_Store(COLORS_DIR)
 color_info_zarray = zarr.open(color_info_store)
 color_info_shape = color_info_zarray.shape[-3:]
-color_info_resolution = [1.34, 1.54, 2.0]
-color_info_box_size = np.round(10 / np.array(color_info_resolution)).astype(int)  # 10 um box
+color_info_box_size = np.round(CUBE_SIZE / np.array(COLOR_RESOLUTION)).astype(int)  # 10 um box
 print("Box size", color_info_box_size)
 
 process_chunk(chunk_file, number)

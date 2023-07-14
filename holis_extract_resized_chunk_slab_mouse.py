@@ -12,6 +12,8 @@ from skimage.transform import resize
 from stack_to_multiscale_ngff.archived_nested_store import Archived_Nested_Store
 from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 
+from utils.settings import *
+
 
 def get_origin_coords(ndim, patchify_chunks_shape, chunk_size):
     """
@@ -64,24 +66,22 @@ def process_chunk(ind):
 
 
 chunk_file = sys.argv[1]
-DATA_DIR = sys.argv[2]
+NUCLEI_DIR = sys.argv[2]
 chunks_folder = str(Path(chunk_file).parent)
 if not os.path.exists(chunks_folder):
     os.makedirs(chunks_folder)
-DEEPBLINK_CHUNK_SIZE = (40, 1700, 1700)
-RESOLUTION = [1.34, 1.54, 2.0]
-yx_ratio = float(RESOLUTION[-1]) / RESOLUTION[-2]
-yz_ratio = float(RESOLUTION[-3]) / RESOLUTION[-2]
+yx_ratio = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
+yz_ratio = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
 number = int(re.findall(r"\d+", os.path.basename(chunk_file))[-1])
-location = os.path.join(DATA_DIR, 'scale0')
+location = os.path.join(NUCLEI_DIR, 'scale0')
 store = H5_Nested_Store(location)
 zarray = zarr.open(store)
 dask_zarray = da.array(zarray)
 lazy_tiff_stack = dask_zarray[0, 0, :, :, :]
-ratios = (np.array(lazy_tiff_stack.shape) / np.array(DEEPBLINK_CHUNK_SIZE)).astype('int') + 1
-patchify_chunks_shape = (*list(ratios), *DEEPBLINK_CHUNK_SIZE)
-origin_coords = get_origin_coords(3, patchify_chunks_shape, DEEPBLINK_CHUNK_SIZE)
-chunk_indices = get_chunk_indices(origin_coords, DEEPBLINK_CHUNK_SIZE)
+ratios = (np.array(lazy_tiff_stack.shape) / np.array(CHUNK_SIZE)).astype('int') + 1
+patchify_chunks_shape = (*list(ratios), *CHUNK_SIZE)
+origin_coords = get_origin_coords(3, patchify_chunks_shape, CHUNK_SIZE)
+chunk_indices = get_chunk_indices(origin_coords, CHUNK_SIZE)
 lazy_data = dask_zarray[0, 0, :, :, :]
 ind = chunk_indices[number]
 process_chunk(ind)

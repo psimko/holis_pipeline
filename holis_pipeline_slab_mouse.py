@@ -34,13 +34,11 @@ from skimage.transform import resize
 from stack_to_multiscale_ngff.archived_nested_store import Archived_Nested_Store
 from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 
-DATA_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/omezarr/nuclei.omehans'
-OUTPUT_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/output/pytorch_unet_mouse_model/'
-PYTORCH_CHUNK_SIZE = (40, 1700, 1700)
-PYTORCH_MODEL_PATH = '/bil/proj/rf1hillman/pynet/segmentation_combMouse_128_oneVolume_v1/model.pth'  # mouse model
+from utils.settings import *
+
+
 signal_channel = 0
 resolution_level = 0
-RESOLUTION = [1.34, 1.54, 2.0]
 work_dir = os.getcwd()
 print("Working directory: ", work_dir)
 
@@ -64,10 +62,10 @@ def write_detection_task_for_slurm(img_path, output_path):
     with open(output_path, 'w') as f:
         f.write('#!/bin/bash\n')
         f.write('module load miniconda3\n')
-        f.write('source activate holis-pytorch')  # TODO
+        f.write(f'source activate {GPU_ENV_NAME}')
         f.write('\n')
         f.write(f'python {work_dir}/predict_w_patchify_2.py ')  # TODO
-        f.write(PYTORCH_MODEL_PATH)
+        f.write(MODEL_PATH)
         f.write(' ')
         f.write(img_path)
         f.write('\n')
@@ -81,8 +79,8 @@ def submit_slurm_task_gpu(path_to_task):
 def detect_cells_deepblink_slurm(chunk_numbers, chunks_folder, jobs_folder):
     for chunk_number in chunk_numbers:
         chunk_file = os.path.join(chunks_folder, f"chunk_{str(chunk_number).zfill(5)}.tif")
-        print("chunk_file", chunk_file)
-        if os.path.exists(chunk_file.replace('.tif', '.csv')):
+        detections_file_name = os.path.join(os.path.dirname(chunk_file), f"napari_{os.path.basename(chunk_file).replace('.tif', '.csv')}")
+        if os.path.exists(detections_file_name):
             print(f"Skipping chunk {chunk_number}")
             continue
         print(f"Submitting gpu task for chunk {chunk_number}")
@@ -239,7 +237,7 @@ def write_spectral_extraction_script_for_slurm(chunk_file, task_path):
         f.write(f'python {work_dir}/holis_get_chunk_spectral_info_slab_mouse.py ')
         f.write(chunk_file)
         f.write(' ')
-        f.write(DATA_DIR)
+        f.write(NUCLEI_DIR)
         f.write('\n')
 
 
@@ -261,12 +259,12 @@ def write_chunk_extraction_script_for_slurm(chunk_file, task_path):
     with open(task_path, 'w') as f:
         f.write('#!/bin/bash\n')
         f.write('module load miniconda3\n')
-        f.write('source activate deepblink')
+        f.write(f'source activate {LNODE_ENV_NAME}')
         f.write('\n')
         f.write(f'python {work_dir}/holis_extract_resized_chunk_slab_mouse.py ')
         f.write(chunk_file)
         f.write(' ')
-        f.write(DATA_DIR)
+        f.write(NUCLEI_DIR)
         f.write('\n')
 
 
@@ -274,12 +272,12 @@ def write_chunk_inpainting_script_for_slurm(chunk_file, task_path):
     with open(task_path, 'w') as f:
         f.write('#!/bin/bash\n')
         f.write('module load miniconda3\n')
-        f.write('source activate deepblink')
+        f.write(f'source activate {LNODE_ENV_NAME}')
         f.write('\n')
         f.write(f'python {work_dir}/holis_extract_resized_inpainted_chunk_slab_mouse.py ')
         f.write(chunk_file)
         f.write(' ')
-        f.write(DATA_DIR)
+        f.write(NUCLEI_DIR)
         f.write('\n')
 
 
@@ -334,7 +332,7 @@ def main():
     tstart = datetime.now()
     log.info(f"START TIME: {tstart}")
 
-    location = os.path.join(DATA_DIR, f'scale{resolution_level}')
+    location = os.path.join(NUCLEI_DIR, f'scale{resolution_level}')
     store = H5_Nested_Store(location)
     zarray = zarr.open(store)
     dask_zarray = da.array(zarray)
@@ -350,13 +348,13 @@ def main():
         os.makedirs(jobs_folder)
 
     print("Chunks folder", chunks_folder)
-    ratios = (np.array(lazy_tiff_stack.shape) / np.array(PYTORCH_CHUNK_SIZE)).astype('int') + 1
-    patchify_chunks_shape = (*list(ratios), *PYTORCH_CHUNK_SIZE)
-    origin_coords = get_origin_coords(3, patchify_chunks_shape, PYTORCH_CHUNK_SIZE)
-    chunk_indices = get_chunk_indices(origin_coords, PYTORCH_CHUNK_SIZE)
+    ratios = (np.array(lazy_tiff_stack.shape) / np.array(CHUNK_SIZE)).astype('int') + 1
+    patchify_chunks_shape = (*list(ratios), *CHUNK_SIZE)
+    origin_coords = get_origin_coords(3, patchify_chunks_shape, CHUNK_SIZE)
+    chunk_indices = get_chunk_indices(origin_coords, CHUNK_SIZE)
 
-    yx_ratio = float(RESOLUTION[-1]) / RESOLUTION[-2]  # make resolution isotropic, equal y resolution (only for spot detection)
-    yz_ratio = float(RESOLUTION[-3]) / RESOLUTION[-2]  # make resolution isotropic, equal y resolution (only for spot detection)
+    yx_ratio = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]  # make resolution isotropic, equal y resolution (only for spot detection)
+    yz_ratio = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]  # make resolution isotropic, equal y resolution (only for spot detection)
 
     bg_chunks = set(np.load(os.path.join(OUTPUT_DIR, "zero_chunks.npy")))
     bright_chunks = set(np.load(os.path.join(OUTPUT_DIR, "bright_chunks.npy")))
