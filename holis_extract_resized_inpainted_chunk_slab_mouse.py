@@ -85,6 +85,6 @@ origin_coords = get_origin_coords(3, patchify_chunks_shape, CHUNK_SIZE)
 chunk_indices = get_chunk_indices(origin_coords, CHUNK_SIZE)
 lazy_data = dask_zarray[0, 0, :, :, :]
 ind = chunk_indices[number]
-low_res_folder = os.path.join(OUT_DIR, "scale_4")
+low_res_folder = os.path.join(OUT_DIR, "scale_x")
 low_res_mask_folder = os.path.join(low_res_folder, "bright_spots_mask_resized")
 process_chunk(ind)

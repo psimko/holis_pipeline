@@ -150,7 +150,7 @@ def remove_background_spots(points, nuclei_chunk_shape):
     print("Converting to binary", cells_binary.shape)
     np.put(cells_binary, np.ravel_multi_index(detected_cells_np.T, nuclei_chunk_shape), 1)
     print("Multiplying by mask")
-    mask_folder = os.path.join(str(Path(spectral_info_folder).parent.parent), 'scale_4', 'mask_resized')
+    mask_folder = os.path.join(str(Path(spectral_info_folder).parent.parent), 'scale_x', 'mask_resized')
     mask_stack = tifffile.imread(os.path.join(mask_folder, f"chunk_{str(number).zfill(5)}.tif"))
     mask_stack = resize(mask_stack, nuclei_chunk_shape)
     cells_filtered = cells_binary * mask_stack
