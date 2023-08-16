@@ -1,3 +1,7 @@
+"""
+usage:
+python holis_segment_foreground_and_cerebellum.py <path to input omezarr data> <path to pipeline output folder> <resolution level used to generate masks>
+"""
 import os
 import re
 import subprocess
@@ -13,52 +17,13 @@ import dask.array as da
 from skimage.transform import resize
 
 
-DATA_DIR = '/CBI_FastStore/Iana/hillman/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/omezarr/nuclei.omehans'
-OUTPUT_DIR = '/CBI_FastStore/Iana/hillman/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/output'
+DATA_DIR = sys.argv[1]
+OUTPUT_DIR = sys.argv[2]
 DEEPBLINK_CHUNK_SIZE = (40, 1700, 1700)
 signal_channel = 0
 resolution_level = 0
 RESOLUTION = [1.34, 1.54, 2.0]
-smallest_scale = 3
-
-
-def get_origin_coords(ndim, patchify_chunks_shape, chunk_size):
-    """
-    Get coordinates of each chunk origin.
-
-    TODO: only 3D now, make compatible with 2D
-
-    :param ndim:
-    :param chunk_shape:
-    :param patches_shape:
-    :return:
-    """
-    coords_shape = list(patchify_chunks_shape[:ndim]) + [ndim]
-    coords = np.empty(coords_shape, dtype=np.uint16)
-    print(" coords shape", coords.shape)
-    for z in range(coords.shape[0]):
-        for y in range(coords.shape[1]):
-            for x in range(coords.shape[2]):
-                coords[z, y, x, :] = np.array((
-                    z * chunk_size[0],
-                    y * chunk_size[1],
-                    x * chunk_size[2]
-                ))
-    coords = np.reshape(coords, (np.prod(coords.shape[:ndim]), ndim))
-    print("final coords shape", coords.shape)
-    return coords
-
-
-
-def get_chunk_indices(origin_coords, chunk_size):
-    indices = []
-    for origin in list(origin_coords):
-        indices.append([
-            slice(origin[0], origin[0] + chunk_size[0], 1),
-            slice(origin[1], origin[1] + chunk_size[1], 1),
-            slice(origin[2], origin[2] + chunk_size[2], 1)
-        ])
-    return indices
+smallest_scale = int(sys.argv[3])
 
 
 def get_chunks_with_bright_signal():
@@ -234,7 +199,6 @@ def get_chunks_with_background():
     dask_mask_to_tiffs_resize_check_zeros(lazy_tiff_stack, chunk_indices, chunks_folder, yx_ratio, yz_ratio, missing_chunks)
 
 
-
 def extract_low_resolution():
     print("Extracting scale", smallest_scale)
     location = os.path.join(DATA_DIR, f'scale{smallest_scale}')
@@ -242,7 +206,6 @@ def extract_low_resolution():
     zarray = zarr.open(store)
     data = zarray[0, 0, :, :, :]
     tifffile.imwrite(os.path.join(OUTPUT_DIR, f"scale{smallest_scale}_stack.tif"), data)
-
 
 
 if __name__ == "__main__":
@@ -259,24 +222,6 @@ if __name__ == "__main__":
 
     if not os.path.exists(os.path.join(OUTPUT_DIR, "bg_fg_mask.tif")) or not os.path.exists(os.path.join(OUTPUT_DIR, "bright_mask.tif")):
         raise RuntimeError("Please provide both bg_fg_mask.tif and bright_mask.tif in your output folder")
-
-    location = os.path.join(DATA_DIR, f'scale{resolution_level}')
-    store = H5_Nested_Store(location)
-    zarray = zarr.open(store)
-    print("Zarray shape", zarray.shape, "\n")
-    dask_zarray = da.array(zarray)
-    lazy_tiff_stack = dask_zarray[0, signal_channel, :, :, :]
-    print(lazy_tiff_stack.shape)
-
-    chunks_folder = os.path.join(OUTPUT_DIR, f'scale_{resolution_level}', 'chunks_resized')
-    if not os.path.exists(chunks_folder):
-        os.makedirs(chunks_folder)
-
-    ratios = (np.array(lazy_tiff_stack.shape) / np.array(DEEPBLINK_CHUNK_SIZE)).astype('int') + 1
-    patchify_chunks_shape = (*list(ratios), *DEEPBLINK_CHUNK_SIZE)
-    origin_coords = get_origin_coords(3, patchify_chunks_shape, DEEPBLINK_CHUNK_SIZE)
-    np.save(os.path.join(OUTPUT_DIR, "scale_0", "chunk_origin_coords.npy"), origin_coords)
-    chunk_indices = get_chunk_indices(origin_coords, DEEPBLINK_CHUNK_SIZE)
 
     get_chunks_with_background()
     get_chunks_with_bright_signal()
