@@ -232,7 +232,7 @@ def write_spectral_extraction_script_for_slurm(chunk_file, task_path):
     with open(task_path, 'w') as f:
         f.write('#!/bin/bash\n')
         f.write('module load miniconda3\n')
-        f.write('source activate {LNODE_ENV_NAME}')
+        f.write(f'source activate {LNODE_ENV_NAME}')
         f.write('\n')
         f.write(f'python {work_dir}/holis_get_chunk_spectral_info_slab_mouse.py ')
         f.write(chunk_file)
