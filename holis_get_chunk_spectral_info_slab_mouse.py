@@ -316,9 +316,9 @@ chunks_folder = str(Path(chunk_file).parent)
 spectral_info_folder = os.path.join(str(Path(chunks_folder).parent), "spectral_info")
 if not os.path.exists(spectral_info_folder):
     os.makedirs(spectral_info_folder)
-# dbscan_folder = os.path.join(str(Path(chunks_folder).parent), "dbscan")
-# if not os.path.exists(dbscan_folder):
-#     os.makedirs(dbscan_folder)
+dbscan_folder = os.path.join(str(Path(chunks_folder).parent), "dbscan")
+if not os.path.exists(dbscan_folder):
+     os.makedirs(dbscan_folder)
 xy_factor = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
 zy_factor = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
 number = int(re.findall(r"\d+", os.path.basename(chunk_file))[-1])
