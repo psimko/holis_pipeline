@@ -316,9 +316,9 @@ chunks_folder = str(Path(chunk_file).parent)
 spectral_info_folder = os.path.join(str(Path(chunks_folder).parent), "spectral_info")
 if not os.path.exists(spectral_info_folder):
     os.makedirs(spectral_info_folder)
-dbscan_folder = os.path.join(str(Path(chunks_folder).parent), "dbscan")
-if not os.path.exists(dbscan_folder):
-    os.makedirs(dbscan_folder)
+# dbscan_folder = os.path.join(str(Path(chunks_folder).parent), "dbscan")
+# if not os.path.exists(dbscan_folder):
+#     os.makedirs(dbscan_folder)
 xy_factor = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
 zy_factor = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
 number = int(re.findall(r"\d+", os.path.basename(chunk_file))[-1])
@@ -337,7 +337,8 @@ lazy_data = dask_zarray[0, 1:, :, :, :]
 nuclei_box_size = np.round(CUBE_SIZE / np.array(NUCLEI_RESOLUTION)).astype(int)  # 10 um box
 ind = chunk_indices[number]
 
-color_info_store = H5_Nested_Store(COLORS_DIR)
+color_info_location = os.path.join(COLORS_DIR, 'scale0')
+color_info_store = H5_Nested_Store(color_info_location)
 color_info_zarray = zarr.open(color_info_store)
 color_info_shape = color_info_zarray.shape[-3:]
 color_info_box_size = np.round(CUBE_SIZE / np.array(COLOR_RESOLUTION)).astype(int)  # 10 um box
