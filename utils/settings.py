@@ -1,10 +1,10 @@
-NUCLEI_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/omezarr/nuclei.omehans'  # nuclei
-COLORS_DIR = "/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/omezarr/colors.omehans/scale0"
-OUTPUT_DIR = '/bil/proj/rf1hillman/results/2023_04_04_combinatorialSlide_mouse_tiff_forIana/dataset_noOverlay_skewed/output/pytorch_unet_mouse_model_iana_test/'
+NUCLEI_DIR = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/AI7_EH5f3/omezarr/nuclei.omehans'  # nuclei
+COLORS_DIR = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/AI7_EH5f3/omezarr/colors.omehans'
+OUTPUT_DIR = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/AI7_EH5f3/output/'
 CHUNK_SIZE = (40, 1700, 1700)
 MODEL_PATH = '/bil/proj/rf1hillman/pynet/segmentation_mouse_pruned_norm_scaled__128_oneVol_v2_w1_b1_e12_from345/model.pth'  # mouse model
 NUCLEI_RESOLUTION = [1.34, 1.54, 2.0]  # nuclei
 COLOR_RESOLUTION = [1.34, 1.54, 2.0]
 CUBE_SIZE = 10  # um to cut around nuclei
-GPU_ENV_NAME = 'holis-pytorch'
-LNODE_ENV_NAME = 'deepblink'
+GPU_ENV_NAME = 'pytorch'
+LNODE_ENV_NAME = 'deepblink2'
