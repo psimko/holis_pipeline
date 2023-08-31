@@ -169,20 +169,12 @@ def remove_background_spots(points, nuclei_chunk_shape):
     return filtered_cells_df, filtered_cells_np
 
 
-def process_chunk(chunk_file, number):
-    #print("Processing chunk", number)
-    nuclei_chunk = zarray[0, 0, ind[0], ind[1], ind[2]]
-    napari_csv = os.path.join(os.path.dirname(chunk_file), f"napari_{os.path.basename(chunk_file).replace('.tif', '.csv')}")
-    points_df = pd.read_csv(napari_csv)
-    points_df = points_df[["axis-0", "axis-1", "axis-2"]]
-    points = points_df.to_numpy()
-    print("Points", points.shape)
-    nuclei_chunk_shape = [
-        int(round(nuclei_chunk.shape[0] * zy_factor)), nuclei_chunk.shape[1], int(round(nuclei_chunk.shape[2] * xy_factor))
-    ]  # ONLY for removing bg
-    filtered_df, points = remove_background_spots(points, nuclei_chunk_shape)  # points are in chunk (isotropic) space
-    points = points.astype('float32')
-
+def extract_box_intensities_resolution_mismatch(points):
+    """
+    Extraction of boxes around nuclei centroids.
+    The boxes are extracted separately for nuclei channel and color channels, with the assumption that
+    resolution for nuclei channel is different (better) than resolution of color channels.
+    """
     points[:, 2] = points[:, 2] / xy_factor
     points[:, 0] = points[:, 0] / zy_factor
 
@@ -307,16 +299,112 @@ def process_chunk(chunk_file, number):
     spectral_df['color3'] = averages[:, 1]
     spectral_df['color4'] = averages[:, 2]
     spectral_df['color5'] = averages[:, 3]
+    return spectral_df
+
+
+def extract_box_intensities(points, nuclei_box_size):
+    """
+    Extraction of boxes around nuclei centroids.
+    The boxes are extracted assuming the same resolution and shape of nuclei and color channels.
+    """
+    points[:, 2] = points[:, 2] / xy_factor
+    points[:, 0] = points[:, 0] / zy_factor
+
+    points_nuclei = np.round(points).astype(int)
+    points_colors = np.round(points).astype(int)
+    points_colors[:, 0] += nuclei_box_size[0] // 2
+    points_colors[:, 1] += nuclei_box_size[1] // 2
+    points_colors[:, 2] += nuclei_box_size[1] // 2
+    color_locations = list(range(2, 6))
+    averages_nuclei = np.empty(shape=(points_nuclei.shape[0], 1, 1), dtype=np.float32)
+    averages_colors = np.empty(shape=(points_colors.shape[0], len(color_locations), 1), dtype=np.float32)
+
+    color_info_z_min_px = ind[0].start - nuclei_box_size[0] // 2
+    if color_info_z_min_px < 0:
+        color_info_z_min_px = 0
+    color_info_z_max_px = ind[0].stop + nuclei_box_size[0] // 2 + 1
+    if color_info_z_max_px > (color_info_shape[0] - 1):
+        color_info_z_max_px = color_info_shape[0] - 1
+    color_info_y_min_px = ind[1].start - nuclei_box_size[1] // 2
+    if color_info_y_min_px < 0:
+        color_info_y_min_px = 0
+    color_info_y_max_px = ind[1].stop + nuclei_box_size[1] // 2 + 1
+    if color_info_y_max_px > (color_info_shape[1] - 1):
+        color_info_y_max_px = color_info_shape[1] - 1
+    color_info_x_min_px = ind[2].start - nuclei_box_size[2] // 2
+    if color_info_x_min_px < 0:
+        color_info_x_min_px = 0
+    color_info_x_max_px = ind[2].stop + nuclei_box_size[2] // 2 + 1
+    if color_info_x_max_px > (color_info_shape[2] - 1):
+        color_info_x_max_px = color_info_shape[2] - 1
+    color_info_chunk = color_info_zarray[
+        0,
+        :,
+        color_info_z_min_px: color_info_z_max_px,
+        color_info_y_min_px: color_info_y_max_px,
+        color_info_x_min_px: color_info_x_max_px
+    ]
+
+    for ip, point in enumerate(list(points_nuclei)):
+        # extract boxes around each point
+        slice_z, slice_y, slice_x = get_box_slicing(point[0], point[1], point[2], nuclei_chunk.shape[-3:], nuclei_box_size)
+        box = nuclei_chunk[slice_z, slice_y, slice_x]
+        # get the box average for each channel
+        box_avgs = np.mean(box)
+        averages_nuclei[ip, :, 0] = box_avgs
+    print("averages_nuclei", averages_nuclei.shape)
+
+    for ch, color_info_location in enumerate(color_locations):  # works only if resolution of nuclei and colors is the same
+        stripe_file = os.path.join(color_info_location, f"stripe_y{str(stripe_number).zfill(2)}.tiff")
+        print("reading", stripe_file)
+        for ip, point in enumerate(list(points_colors)):
+            # extract boxes around each point
+            slice_z, slice_y, slice_x = get_box_slicing(point[0], point[1], point[2], color_info_chunk.shape[-3:], nuclei_box_size)
+            box = color_info_chunk[slice_z, slice_y, slice_x]
+            # get the box average for each channel
+            box_avgs = np.mean(box)
+            averages_colors[ip, ch, 0] = box_avgs
+    print("averages_colors", averages_colors.shape)
+
+    spectral_df = pd.DataFrame()
+    chunk_origin = origin_coords[number]
+    spectral_df['axis-0'] = points_nuclei[:, 0] + chunk_origin[0]  # global, px
+    spectral_df['axis-1'] = points_nuclei[:, 1] + chunk_origin[1]  # global, px
+    spectral_df['axis-2'] = points_nuclei[:, 2] + chunk_origin[2]  # global, px
+    for ib, cube_width in enumerate(cube_widths):
+        spectral_df[f'color1-{cube_width}um-box'] = averages_nuclei[:, :, ib]
+        spectral_df[f'color2-{cube_width}um-box'] = averages_colors[:, 0, ib]
+        spectral_df[f'color3-{cube_width}um-box'] = averages_colors[:, 1, ib]
+        spectral_df[f'color4-{cube_width}um-box'] = averages_colors[:, 2, ib]
+        spectral_df[f'color5-{cube_width}um-box'] = averages_colors[:, 3, ib]
+    return spectral_df
+
+
+def process_chunk(chunk_file, number):
+    #print("Processing chunk", number)
+    nuclei_chunk = zarray[0, 0, ind[0], ind[1], ind[2]]
+    napari_csv = os.path.join(os.path.dirname(chunk_file), f"napari_{os.path.basename(chunk_file).replace('.tif', '.csv')}")
+    points_df = pd.read_csv(napari_csv)
+    points_df = points_df[["axis-0", "axis-1", "axis-2"]]
+    points = points_df.to_numpy()
+    print("Points", points.shape)
+    nuclei_chunk_shape = [
+        int(round(nuclei_chunk.shape[0] * zy_factor)), nuclei_chunk.shape[1], int(round(nuclei_chunk.shape[2] * xy_factor))
+    ]  # ONLY for removing bg
+    filtered_df, points = remove_background_spots(points, nuclei_chunk_shape)  # points are in chunk (isotropic) space
+    points = points.astype('float32')
+    spectral_df = extract_box_intensities(points, nuclei_box_size)
     spectral_df.to_csv(os.path.join(spectral_info_folder, f"spectral_chunk_{str(number).zfill(5)}.csv"))
 
 
-NUCLEI_DIR = sys.argv[2]
 chunk_file = sys.argv[1]
+NUCLEI_DIR = sys.argv[2]
+
 chunks_folder = str(Path(chunk_file).parent)
 spectral_info_folder = os.path.join(str(Path(chunks_folder).parent), "spectral_info")
 if not os.path.exists(spectral_info_folder):
     os.makedirs(spectral_info_folder)
-dbscan_folder = os.path.join(str(Path(chunks_folder).parent), "dbscan")
+dbscan_folder = os.path.join(str(Path(chunks_folder).parent), "dbscan")  # for background filtered csv files
 if not os.path.exists(dbscan_folder):
      os.makedirs(dbscan_folder)
 xy_factor = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
