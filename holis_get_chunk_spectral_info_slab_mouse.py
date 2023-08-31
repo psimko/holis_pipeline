@@ -380,6 +380,169 @@ def extract_box_intensities(points, nuclei_box_size):
     return spectral_df
 
 
+def get_props(mask, image):
+    # Compute the connected components of the binary mask
+    labels = measure.label(mask)
+
+    # Compute properties of the above found components
+    region_props = pd.DataFrame(
+        measure.regionprops_table(
+            labels,
+            intensity_image=image,
+            properties=['label',
+                        'centroid',
+                        'coords']
+        )
+    )
+    region_props = region_props.round(2)
+    return region_props
+
+
+def blowup_vol(coords_set, image_np):
+    # Convert the set of coordinates to a list
+    coords_list = list(coords_set)
+
+    # Convert coordinates to tuples
+    new_coords = [tuple(coords) for coords in coords_list]
+
+    # Generate all possible permutations of the 1D array
+    all_permutations = np.array(list(itertools.product([0, 1, -1], repeat=3)))
+
+    # Create a set to store the new coordinates
+    new_coords_set = set(new_coords)
+
+    for coords in coords_list:
+        for vector in all_permutations:
+            new_coord = coords + vector
+            if tuple(new_coord) not in new_coords_set and coordinates_in_bounds(image_np, new_coord[0], new_coord[1],
+                                                                                new_coord[2]):
+                new_coords_set.add(tuple(new_coord))  # Add the new_coord as a tuple to the set
+
+    # Convert the set of new coordinates back to a set
+    return new_coords_set
+
+
+def coordinates_in_bounds(image_np, z, y, x):
+    #Check whether the given (x, y, z) coordinates are within bounds of a 3D NumPy image.
+    z_shape, y_shape, x_shape = image_np.shape
+
+    if x < 0 or x >= x_shape:
+        return False
+    if y < 0 or y >= y_shape:
+        return False
+    if z < 0 or z >= z_shape:
+        return False
+
+    return True
+
+
+def get_intensity(image_np, coords_list):
+    """
+    # Calculates average intensity over a list of coordinates in a tiff image
+    """
+    # Create an array to store the intensities at the specified coordinates
+    intensities = []
+
+    # Iterate over the coordinates and get the intensity at each location
+    for coord in coords_list:
+        z, y, x = coord
+        if coordinates_in_bounds(image_np, z, y, x):
+            intensities.append(image_np[z, y, x])
+        else:
+            continue
+
+    # Calculate the average intensity
+    if len(intensities) == 0:
+        average_intensity = 0
+    else:
+        average_intensity = np.mean(intensities)
+
+    return average_intensity
+
+
+def extract_volume_intensities():
+    """
+    Extract average intensities based on nuclei segmentation mask.
+
+    Assuming that resolutions are the same for nuclei and color channels
+    """
+    # find mask by chunk number
+    NUCLEI_MASK_PATH = os.path.join(os.path.dirname(chunk_file), f"mask_{os.path.basename(chunk_file)}")
+    # rescale points to ome-zarr data space
+
+    nuclei_masks_np = tifffile.imread(NUCLEI_MASK_PATH)  # mask is in the isotropic space
+    # ch1_np = zarray[0, 0, ind[0], ind[1], ind[2]]
+    ch1_np = tiffile.imread(chunk_file)  # isotropic
+    # !!! Assuming that resolutions are the same for nuclei and colors
+    # rescaling color data to isotropic space
+    ch2_np = resize(color_info_zarray[0, 0, ind[0], ind[1], ind[2]], ch1_np.shape)
+    ch3_np = resize(color_info_zarray[0, 1, ind[0], ind[1], ind[2]], ch1_np.shape)
+    ch4_np = resize(color_info_zarray[0, 2, ind[0], ind[1], ind[2]], ch1_np.shape)
+    ch5_np = resize(color_info_zarray[0, 3, ind[0], ind[1], ind[2]], ch1_np.shape)
+
+    # Construct the centroid dataframe from ch1
+    nuclei_df = get_props(nuclei_masks_np, ch1_np)
+    spectral_info_df = nuclei_df
+    channels = [ch1_np, ch2_np, ch3_np, ch4_np, ch5_np]
+
+    for label in spectral_info_df['label']:
+        print(f'Working on label {label}')
+
+        # Get coordinates of the initial region (nucleus) as well as the blown up regions
+        l1_coords = spectral_info_df.loc[nuclei_df['label'] == label, 'coords'].values[0]
+        l1_coords = set(tuple(coords) for coords in l1_coords.tolist())
+        l2_coords = blowup_vol(l1_coords, ch1_np)
+        l3_coords = blowup_vol(l2_coords, ch1_np)
+        l4_coords = blowup_vol(l3_coords, ch1_np)
+
+        added_region_l2 = l2_coords - l1_coords
+        added_region_l3 = l3_coords - l2_coords
+        added_region_l4 = l4_coords - l3_coords
+
+        vol_l1 = len(l1_coords)
+        vol_l2 = len(added_region_l2)
+        vol_l3 = len(added_region_l3)
+        vol_l4 = len(added_region_l4)
+
+        spectral_info_df.loc[spectral_info_df['label'] == label, 'vol_l1'] = vol_l1
+        spectral_info_df.loc[spectral_info_df['label'] == label, 'vol_l2'] = vol_l2
+        spectral_info_df.loc[spectral_info_df['label'] == label, 'vol_l3'] = vol_l3
+        spectral_info_df.loc[spectral_info_df['label'] == label, 'vol_l4'] = vol_l4
+
+        counter = 0
+        for channel in channels:
+
+            # Calculate their coordinates
+            l1_intensity = get_intensity(channel, list(l1_coords))
+            l2_intensity = get_intensity(channel, list(added_region_l2))
+            l3_intensity = get_intensity(channel, list(added_region_l3))
+            l4_intensity = get_intensity(channel, list(added_region_l4))
+
+            spectral_info_df.loc[spectral_info_df['label'] == label, counter] = l1_intensity
+            spectral_info_df.loc[spectral_info_df['label'] == label, counter + 1] = l2_intensity
+            spectral_info_df.loc[spectral_info_df['label'] == label, counter + 2] = l3_intensity
+            spectral_info_df.loc[spectral_info_df['label'] == label, counter + 3] = l4_intensity
+            counter += 4
+
+    column_names = ['label', 'axis-0', 'axis-1', 'axis-2','coords',
+                    'vol_l1', 'vol_l2', 'vol_l3', 'vol_l4',
+                    'ch1_l1', 'ch1_l2', 'ch1_l3', 'ch1_l4',
+                    'ch2_l1', 'ch2_l2', 'ch2_l3', 'ch2_l4',
+                    'ch3_l1', 'ch3_l2', 'ch3_l3', 'ch3_l4',
+                    'ch4_l1', 'ch4_l2', 'ch4_l3', 'ch4_l4',
+                    'ch5_l1', 'ch5_l2', 'ch5_l3', 'ch5_l4',
+                    ]
+    spectral_info_df.columns = column_names
+    spectral_info_df = spectral_info_df.drop('coords', axis=1)
+    chunk_origin = origin_coords[number]
+    # rescale back to raw data space
+    spectral_info_df['axis-0'] = spectral_info_df['axis-0'] + chunk_origin[0]  # global, px
+    spectral_info_df['axis-1'] = spectral_info_df['axis-1'] + chunk_origin[1]  # global, px
+    spectral_info_df['axis-2'] = spectral_info_df['axis-2'] + chunk_origin[2]  # global, px
+    spectral_info_df = spectral_info_df.round(2)
+    return spectral_info_df
+
+
 def process_chunk(chunk_file, number):
     #print("Processing chunk", number)
     nuclei_chunk = zarray[0, 0, ind[0], ind[1], ind[2]]
