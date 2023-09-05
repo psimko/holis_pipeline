@@ -1,3 +1,4 @@
+import itertools
 import os
 import re
 import sys
@@ -8,6 +9,7 @@ import pandas as pd
 import dask.array as da
 import tifffile
 import zarr
+from skimage import measure
 from skimage.transform import resize
 from sklearn.cluster import DBSCAN
 from stack_to_multiscale_ngff.archived_nested_store import Archived_Nested_Store
@@ -472,7 +474,7 @@ def extract_volume_intensities():
 
     nuclei_masks_np = tifffile.imread(NUCLEI_MASK_PATH)  # mask is in the isotropic space
     # ch1_np = zarray[0, 0, ind[0], ind[1], ind[2]]
-    ch1_np = tiffile.imread(chunk_file)  # isotropic
+    ch1_np = tifffile.imread(chunk_file)  # isotropic
     # !!! Assuming that resolutions are the same for nuclei and colors
     # rescaling color data to isotropic space
     ch2_np = resize(color_info_zarray[0, 0, ind[0], ind[1], ind[2]], ch1_np.shape)
@@ -556,7 +558,7 @@ def process_chunk(chunk_file, number):
     ]  # ONLY for removing bg
     filtered_df, points = remove_background_spots(points, nuclei_chunk_shape)  # points are in chunk (isotropic) space
     points = points.astype('float32')
-    spectral_df = extract_box_intensities(points, nuclei_box_size)
+    spectral_df = extract_volume_intensities()
     spectral_df.to_csv(os.path.join(spectral_info_folder, f"spectral_chunk_{str(number).zfill(5)}.csv"))
 
 
@@ -565,8 +567,10 @@ NUCLEI_DIR = sys.argv[2]
 
 chunks_folder = str(Path(chunk_file).parent)
 spectral_info_folder = os.path.join(str(Path(chunks_folder).parent), "spectral_info")
-if not os.path.exists(spectral_info_folder):
+try:
     os.makedirs(spectral_info_folder)
+except FileExistsError:
+    pass
 dbscan_folder = os.path.join(str(Path(chunks_folder).parent), "dbscan")  # for background filtered csv files
 if not os.path.exists(dbscan_folder):
      os.makedirs(dbscan_folder)
