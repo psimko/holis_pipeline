@@ -171,6 +171,19 @@ def remove_background_spots(points, nuclei_chunk_shape):
     return filtered_cells_df, filtered_cells_np
 
 
+def remove_background(chunk_file, nuclei_chunk_shape):
+    """
+    Multiply nuclei segmentation mask for a specific chunk by its foreground/background mask.
+    """
+    fg_mask_folder = os.path.join(str(Path(spectral_info_folder).parent.parent), 'scale_x', 'mask_resized')
+    fg_mask_stack = tifffile.imread(os.path.join(fg_mask_folder, f"chunk_{str(number).zfill(5)}.tif"))
+    fg_mask_stack = resize(fg_mask_stack, nuclei_chunk_shape).astype(np.uint8)
+    nuclei_mask_path = os.path.join(os.path.dirname(chunk_file), f"mask_{os.path.basename(chunk_file)}")
+    nuclei_mask = tifffile.imread(nuclei_mask_path)
+    nuclei_mask *= fg_mask_stack
+    tifffile.imwrite(nuclei_mask_path, nuclei_mask)
+
+
 def extract_box_intensities_resolution_mismatch(points):
     """
     Extraction of boxes around nuclei centroids.
@@ -412,29 +425,37 @@ def blowup_vol(coords_set):
     return new_coords_set
 
 
-def coordinates_in_bounds(image_np, coords_array):
-    if coords_array.size == 0:
-        return np.array([])
-    else:
-        z_shape, y_shape, x_shape = image_np.shape
-        x, y, z = coords_array
-        # x, y, z = coords_array.T  # Transpose the coordinates for easy indexing
+def coordinates_in_bounds(image_np, z, y, x):
+    #Check whether the given (x, y, z) coordinates are within bounds of a 3D NumPy image.
+    z_shape, y_shape, x_shape = image_np.shape
 
-        in_bounds = (x >= 0) & (x < x_shape) & (y >= 0) & (y < y_shape) & (z >= 0) & (z < z_shape)
-        return in_bounds
+    if x < 0 or x >= x_shape:
+        return False
+    if y < 0 or y >= y_shape:
+        return False
+    if z < 0 or z >= z_shape:
+        return False
+
+    return True
 
 
 def get_intensity(image_np, coords_list):
-    z, y, x = np.array(coords_list).T  # Separate coordinates into arrays
+    # Create an array to store the intensities at the specified coordinates
+    intensities = []
 
-    # Use boolean indexing to select valid coordinates
-    valid_coords = coordinates_in_bounds(image_np, np.array([z, y, x]))
-    valid_intensity_values = image_np[z[valid_coords], y[valid_coords], x[valid_coords]]
+    # Iterate over the coordinates and get the intensity at each location
+    for coord in coords_list:
+        z, y, x = coord
+        if coordinates_in_bounds(image_np, z, y, x):
+            intensities.append(image_np[z, y, x])
+        else:
+            continue
 
-    if valid_intensity_values.size == 0:
+    # Calculate the average intensity
+    if len(intensities) == 0:
         average_intensity = 0
     else:
-        average_intensity = np.mean(valid_intensity_values)
+        average_intensity = np.mean(intensities)
 
     return average_intensity
 
@@ -454,14 +475,18 @@ def extract_volume_intensities():
     ch1_np = tifffile.imread(chunk_file)  # isotropic
     # !!! Assuming that resolutions are the same for nuclei and colors
     # rescaling color data to isotropic space
-    ch2_np = resize(color_info_zarray[0, 0, ind[0], ind[1], ind[2]], ch1_np.shape)
-    ch3_np = resize(color_info_zarray[0, 1, ind[0], ind[1], ind[2]], ch1_np.shape)
-    ch4_np = resize(color_info_zarray[0, 2, ind[0], ind[1], ind[2]], ch1_np.shape)
-    ch5_np = resize(color_info_zarray[0, 3, ind[0], ind[1], ind[2]], ch1_np.shape)
+    ch2_np_orig = color_info_zarray[0, 0, ind[0], ind[1], ind[2]]
+    print("ch2_np_orig.shape", ch2_np_orig.shape)
+    print("ch2_np_orig.max()", ch2_np_orig.max())
+    ch2_np = resize(color_info_zarray[0, 0, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535   # TODO uint8
+    ch3_np = resize(color_info_zarray[0, 1, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535
+    ch4_np = resize(color_info_zarray[0, 2, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535
+    ch5_np = resize(color_info_zarray[0, 3, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535
 
     # Construct the centroid dataframe from ch1
     nuclei_df = get_props(nuclei_masks_np, ch1_np)
-    spectral_info_df = nuclei_df
+    print("nuclei_df.shape", nuclei_df.shape)
+    spectral_info_df = nuclei_df.copy()
     channels = [ch1_np, ch2_np, ch3_np, ch4_np, ch5_np]
 
     for label in spectral_info_df['label']:
@@ -523,18 +548,11 @@ def extract_volume_intensities():
 
 
 def process_chunk(chunk_file, number):
-    #print("Processing chunk", number)
     nuclei_chunk = zarray[0, 0, ind[0], ind[1], ind[2]]
-    napari_csv = os.path.join(os.path.dirname(chunk_file), f"napari_{os.path.basename(chunk_file).replace('.tif', '.csv')}")
-    points_df = pd.read_csv(napari_csv)
-    points_df = points_df[["axis-0", "axis-1", "axis-2"]]
-    points = points_df.to_numpy()
-    print("Points", points.shape)
     nuclei_chunk_shape = [
         int(round(nuclei_chunk.shape[0] * zy_factor)), nuclei_chunk.shape[1], int(round(nuclei_chunk.shape[2] * xy_factor))
     ]  # ONLY for removing bg
-    filtered_df, points = remove_background_spots(points, nuclei_chunk_shape)  # points are in chunk (isotropic) space
-    points = points.astype('float32')
+    remove_background(chunk_file, nuclei_chunk_shape)
     spectral_df = extract_volume_intensities()
     spectral_df.to_csv(os.path.join(spectral_info_folder, f"spectral_chunk_{str(number).zfill(5)}.csv"))
 
