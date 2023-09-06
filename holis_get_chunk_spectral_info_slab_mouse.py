@@ -400,64 +400,41 @@ def get_props(mask, image):
     return region_props
 
 
-def blowup_vol(coords_set, image_np):
-    # Convert the set of coordinates to a list
-    coords_list = list(coords_set)
+def blowup_vol(coords_set):
+    coords_array = np.array(list(coords_set))
 
-    # Convert coordinates to tuples
-    new_coords = [tuple(coords) for coords in coords_list]
-
-    # Generate all possible permutations of the 1D array
     all_permutations = np.array(list(itertools.product([0, 1, -1], repeat=3)))
 
-    # Create a set to store the new coordinates
-    new_coords_set = set(new_coords)
+    new_coords_array = coords_array[:, np.newaxis, :] + all_permutations[np.newaxis, :, :]
 
-    for coords in coords_list:
-        for vector in all_permutations:
-            new_coord = coords + vector
-            if tuple(new_coord) not in new_coords_set and coordinates_in_bounds(image_np, new_coord[0], new_coord[1],
-                                                                                new_coord[2]):
-                new_coords_set.add(tuple(new_coord))  # Add the new_coord as a tuple to the set
+    new_coords_set = set(map(tuple, new_coords_array.reshape(-1, 3)))
 
-    # Convert the set of new coordinates back to a set
     return new_coords_set
 
 
-def coordinates_in_bounds(image_np, z, y, x):
-    #Check whether the given (x, y, z) coordinates are within bounds of a 3D NumPy image.
-    z_shape, y_shape, x_shape = image_np.shape
+def coordinates_in_bounds(image_np, coords_array):
+    if coords_array.size == 0:
+        return np.array([])
+    else:
+        z_shape, y_shape, x_shape = image_np.shape
+        x, y, z = coords_array
+        # x, y, z = coords_array.T  # Transpose the coordinates for easy indexing
 
-    if x < 0 or x >= x_shape:
-        return False
-    if y < 0 or y >= y_shape:
-        return False
-    if z < 0 or z >= z_shape:
-        return False
-
-    return True
+        in_bounds = (x >= 0) & (x < x_shape) & (y >= 0) & (y < y_shape) & (z >= 0) & (z < z_shape)
+        return in_bounds
 
 
 def get_intensity(image_np, coords_list):
-    """
-    # Calculates average intensity over a list of coordinates in a tiff image
-    """
-    # Create an array to store the intensities at the specified coordinates
-    intensities = []
+    z, y, x = np.array(coords_list).T  # Separate coordinates into arrays
 
-    # Iterate over the coordinates and get the intensity at each location
-    for coord in coords_list:
-        z, y, x = coord
-        if coordinates_in_bounds(image_np, z, y, x):
-            intensities.append(image_np[z, y, x])
-        else:
-            continue
+    # Use boolean indexing to select valid coordinates
+    valid_coords = coordinates_in_bounds(image_np, np.array([z, y, x]))
+    valid_intensity_values = image_np[z[valid_coords], y[valid_coords], x[valid_coords]]
 
-    # Calculate the average intensity
-    if len(intensities) == 0:
+    if valid_intensity_values.size == 0:
         average_intensity = 0
     else:
-        average_intensity = np.mean(intensities)
+        average_intensity = np.mean(valid_intensity_values)
 
     return average_intensity
 
@@ -493,9 +470,9 @@ def extract_volume_intensities():
         # Get coordinates of the initial region (nucleus) as well as the blown up regions
         l1_coords = spectral_info_df.loc[nuclei_df['label'] == label, 'coords'].values[0]
         l1_coords = set(tuple(coords) for coords in l1_coords.tolist())
-        l2_coords = blowup_vol(l1_coords, ch1_np)
-        l3_coords = blowup_vol(l2_coords, ch1_np)
-        l4_coords = blowup_vol(l3_coords, ch1_np)
+        l2_coords = blowup_vol(l1_coords)
+        l3_coords = blowup_vol(l2_coords)
+        l4_coords = blowup_vol(l3_coords)
 
         added_region_l2 = l2_coords - l1_coords
         added_region_l3 = l3_coords - l2_coords
