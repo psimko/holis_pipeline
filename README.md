@@ -1,6 +1,12 @@
 # holis_pipeline
 HOLiS pipeline for nuclei detection and extraction of spectral information
 
+This branch is for analyzing mouse brains.<br/>
+This branch is for ome-zarr data.<br/>
+This branch introduces the new method for extracting
+spectral information based on nuclei segmentation mask and
+adding volumetric layers around it.
+
 Current version expects to have foreground/background mask and mask of very bright signal areas (like cerebellum in the mouse brain) that distort the detection.
 1) Fuse stripes into composite tiff planes, using `fuse_tiffs.py` script (`python fuse_tiffs.py <path_to_tiff_stacks> <path_to_output_folder>`)
 2) Rearrange the composite tiffs into folders (nuclei/1, colors/2, colors/3, colors/4, colors/5).

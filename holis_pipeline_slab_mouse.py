@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 from datetime import datetime
 from glob import glob
 
@@ -323,7 +324,7 @@ def merge_spectral_info_df(origin_coords, bg_chunks):
     df = pd.concat(to_merge, ignore_index=True)
     print("Concatenated. Saving")
     # save new df
-    df.to_csv(os.path.join(OUTPUT_DIR, "scale_0", "detected_cells_pytorch_unet_bg_removed_um_w_color_info.csv"))
+    df.to_csv(os.path.join(OUTPUT_DIR, "scale_0", "detected_cells_pytorch_unet_bg_removed_px_w_color_info.csv"))
     return df
 
 
@@ -395,7 +396,7 @@ def main():
     sent_tasks = set()
     remaining_chunks = fg_chunks.copy()
     while len(remaining_chunks):
-        print("Chunks remaining", len(remaining_chunks))
+        print("Chunks remaining to be extracted", len(remaining_chunks))
         extracted_chunks = set([
             int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(chunks_folder, "*.tif"))
         ])
@@ -403,6 +404,7 @@ def main():
         detect_cells_deepblink_slurm(list(chunk_numbers_set), chunks_folder, jobs_folder)
         sent_tasks.update(chunk_numbers_set)
         remaining_chunks = fg_chunks - sent_tasks
+        time.sleep(2)
 
     log.info("All chunks were extracted")
     tfin_extraction = datetime.now()
@@ -417,7 +419,7 @@ def main():
     sent_tasks = set()
     remaining_chunks = fg_chunks.copy()
     while len(remaining_chunks):
-        print("Chunks remaining", len(remaining_chunks))
+        print("Chunks remaining to do nuclei detection", len(remaining_chunks))
         detection_done = set([
             int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(chunks_folder, "*.csv"))
         ])
@@ -425,6 +427,7 @@ def main():
         get_spectral_info_slurm(list(chunk_numbers_set), chunks_folder, jobs_folder, spectral_info_folder)
         sent_tasks.update(chunk_numbers_set)
         remaining_chunks = fg_chunks - sent_tasks
+        time.sleep(2)
 
     log.info("All nuclei detection jobs finished")
     tfin_detection = datetime.now()
@@ -436,12 +439,13 @@ def main():
 
     remaining_chunks = fg_chunks.copy()
     while len(remaining_chunks):
-        print("Chunks remaining", len(remaining_chunks))
+        print("Chunks remaining to extract spectral info", len(remaining_chunks))
         print(remaining_chunks)
         spectral_info_done = set([
             int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(spectral_info_folder, "*.csv"))
         ])
         remaining_chunks = fg_chunks - spectral_info_done
+        time.sleep(2)
 
     log.info("All spectral extraction jobs finished")
     tfin_spectral_info = datetime.now()
@@ -458,7 +462,7 @@ def main():
     # drop columns with spectral info
     df = df[['axis-0', 'axis-1', 'axis-2']]
     # save df with just the coordinates
-    df.to_csv(os.path.join(OUTPUT_DIR, "scale_0", "detected_cells_pytorch_unet_bg_removed_new_um.csv"))
+    df.to_csv(os.path.join(OUTPUT_DIR, "scale_0", "detected_cells_pytorch_unet_bg_removed_new_px.csv"))
 
 
 if __name__ == "__main__":

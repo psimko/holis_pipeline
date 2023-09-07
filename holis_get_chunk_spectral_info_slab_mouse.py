@@ -182,6 +182,7 @@ def remove_background(chunk_file, nuclei_chunk_shape):
     nuclei_mask = tifffile.imread(nuclei_mask_path)
     nuclei_mask *= fg_mask_stack
     tifffile.imwrite(nuclei_mask_path, nuclei_mask)
+    return np.any(nuclei_mask)
 
 
 def extract_box_intensities_resolution_mismatch(points):
@@ -473,15 +474,13 @@ def extract_volume_intensities():
     nuclei_masks_np = tifffile.imread(NUCLEI_MASK_PATH)  # mask is in the isotropic space
     # ch1_np = zarray[0, 0, ind[0], ind[1], ind[2]]
     ch1_np = tifffile.imread(chunk_file)  # isotropic
+
     # !!! Assuming that resolutions are the same for nuclei and colors
     # rescaling color data to isotropic space
-    ch2_np_orig = color_info_zarray[0, 0, ind[0], ind[1], ind[2]]
-    print("ch2_np_orig.shape", ch2_np_orig.shape)
-    print("ch2_np_orig.max()", ch2_np_orig.max())
-    ch2_np = resize(color_info_zarray[0, 0, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535   # TODO uint8
-    ch3_np = resize(color_info_zarray[0, 1, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535
-    ch4_np = resize(color_info_zarray[0, 2, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535
-    ch5_np = resize(color_info_zarray[0, 3, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535
+    ch2_np = (resize(color_info_zarray[0, 0, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint8')
+    ch3_np = (resize(color_info_zarray[0, 1, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint8')
+    ch4_np = (resize(color_info_zarray[0, 2, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint8')
+    ch5_np = (resize(color_info_zarray[0, 3, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint8')
 
     # Construct the centroid dataframe from ch1
     nuclei_df = get_props(nuclei_masks_np, ch1_np)
@@ -528,32 +527,30 @@ def extract_volume_intensities():
             spectral_info_df.loc[spectral_info_df['label'] == label, counter + 3] = l4_intensity
             counter += 4
 
-    column_names = ['label', 'axis-0', 'axis-1', 'axis-2','coords',
-                    'vol_l1', 'vol_l2', 'vol_l3', 'vol_l4',
-                    'ch1_l1', 'ch1_l2', 'ch1_l3', 'ch1_l4',
-                    'ch2_l1', 'ch2_l2', 'ch2_l3', 'ch2_l4',
-                    'ch3_l1', 'ch3_l2', 'ch3_l3', 'ch3_l4',
-                    'ch4_l1', 'ch4_l2', 'ch4_l3', 'ch4_l4',
-                    'ch5_l1', 'ch5_l2', 'ch5_l3', 'ch5_l4',
-                    ]
     spectral_info_df.columns = column_names
     spectral_info_df = spectral_info_df.drop('coords', axis=1)
     chunk_origin = origin_coords[number]
     # rescale back to raw data space
-    spectral_info_df['axis-0'] = spectral_info_df['axis-0'] + chunk_origin[0]  # global, px
+    spectral_info_df['axis-0'] = spectral_info_df['axis-0'] / zy_factor + chunk_origin[0]  # global, px
     spectral_info_df['axis-1'] = spectral_info_df['axis-1'] + chunk_origin[1]  # global, px
-    spectral_info_df['axis-2'] = spectral_info_df['axis-2'] + chunk_origin[2]  # global, px
+    spectral_info_df['axis-2'] = spectral_info_df['axis-2'] / xy_factor + chunk_origin[2]  # global, px
     spectral_info_df = spectral_info_df.round(2)
     return spectral_info_df
 
 
 def process_chunk(chunk_file, number):
+    print(f"=========== Processing chunk {number} ===========")
     nuclei_chunk = zarray[0, 0, ind[0], ind[1], ind[2]]
     nuclei_chunk_shape = [
         int(round(nuclei_chunk.shape[0] * zy_factor)), nuclei_chunk.shape[1], int(round(nuclei_chunk.shape[2] * xy_factor))
     ]  # ONLY for removing bg
-    remove_background(chunk_file, nuclei_chunk_shape)
-    spectral_df = extract_volume_intensities()
+    nonzero = remove_background(chunk_file, nuclei_chunk_shape)
+    if nonzero:
+        print("Extracting intensities")
+        spectral_df = extract_volume_intensities()
+    else:
+        print("This chunk is background only. Creating empty dataframe")
+        spectral_df = pd.DataFrame(columns=column_names)
     spectral_df.to_csv(os.path.join(spectral_info_folder, f"spectral_chunk_{str(number).zfill(5)}.csv"))
 
 
@@ -593,5 +590,14 @@ color_info_zarray = zarr.open(color_info_store)
 color_info_shape = color_info_zarray.shape[-3:]
 color_info_box_size = np.round(CUBE_SIZE / np.array(COLOR_RESOLUTION)).astype(int)  # 10 um box
 print("Box size", color_info_box_size)
+
+column_names = ['label', 'axis-0', 'axis-1', 'axis-2', 'coords',
+                'vol_l1', 'vol_l2', 'vol_l3', 'vol_l4',
+                'ch1_l1', 'ch1_l2', 'ch1_l3', 'ch1_l4',
+                'ch2_l1', 'ch2_l2', 'ch2_l3', 'ch2_l4',
+                'ch3_l1', 'ch3_l2', 'ch3_l3', 'ch3_l4',
+                'ch4_l1', 'ch4_l2', 'ch4_l3', 'ch4_l4',
+                'ch5_l1', 'ch5_l2', 'ch5_l3', 'ch5_l4',
+                ]
 
 process_chunk(chunk_file, number)
