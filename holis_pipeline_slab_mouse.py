@@ -35,6 +35,7 @@ from skimage.transform import resize
 from stack_to_multiscale_ngff.archived_nested_store import Archived_Nested_Store
 from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 
+from utils.create_masks import get_chunks_with_background, get_chunks_with_bright_signal
 from utils.settings import *
 
 
@@ -379,6 +380,9 @@ def main():
     # Log the start time
     tstart = datetime.now()
     log.info(f"START TIME: {tstart}")
+
+    get_chunks_with_background()
+    get_chunks_with_bright_signal()
 
     location = os.path.join(NUCLEI_DIR, f'scale{resolution_level}')
     store = H5_Nested_Store(location)

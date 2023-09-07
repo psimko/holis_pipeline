@@ -162,10 +162,11 @@ def remove_background_spots(points, nuclei_chunk_shape):
     filtered_cells_np = np.asarray(zipped_nz)
     print("filtered_cells_np", filtered_cells_np.shape)
     print("Generating csv")
-    filtered_cells_df = pd.DataFrame()
-    filtered_cells_df['axis-0'] = list(filtered_cells_np[:, 0])
-    filtered_cells_df['axis-1'] = list(filtered_cells_np[:, 1])
-    filtered_cells_df['axis-2'] = list(filtered_cells_np[:, 2])
+    filtered_cells_df = pd.DataFrame(columns=['axis-0', 'axis-1', 'axis-2'])
+    if filtered_cells_np.shape[0] > 0:
+        filtered_cells_df['axis-0'] = list(filtered_cells_np[:, 0])
+        filtered_cells_df['axis-1'] = list(filtered_cells_np[:, 1])
+        filtered_cells_df['axis-2'] = list(filtered_cells_np[:, 2])
     print("Saving coords to csv")
     filtered_cells_df.to_csv(os.path.join(dbscan_folder, f"filtered_chunk_{str(number).zfill(5)}.csv"))
     return filtered_cells_df, filtered_cells_np
@@ -183,6 +184,25 @@ def remove_background(chunk_file, nuclei_chunk_shape):
     nuclei_mask *= fg_mask_stack
     tifffile.imwrite(nuclei_mask_path, nuclei_mask)
     return np.any(nuclei_mask)
+
+def process_chunk(chunk_file, number):
+    #print("Processing chunk", number)
+    nuclei_chunk = zarray[0, 0, ind[0], ind[1], ind[2]]
+    napari_csv = os.path.join(os.path.dirname(chunk_file), f"napari_{os.path.basename(chunk_file).replace('.tif', '.csv')}")
+    points_df = pd.read_csv(napari_csv)
+    points_df = points_df[["axis-0", "axis-1", "axis-2"]]
+    points = points_df.to_numpy()
+    print("Points", points.shape)
+    nuclei_chunk_shape = [
+        int(round(nuclei_chunk.shape[0] * zy_factor)), nuclei_chunk.shape[1], int(round(nuclei_chunk.shape[2] * xy_factor))
+    ]  # ONLY for removing bg
+    filtered_df, points = remove_background_spots(points, nuclei_chunk_shape)  # points are in chunk (isotropic) space
+    if points.shape[0] == 0:
+        spectral_df = pd.DataFrame(columns=["axis-0", "axis-1", "axis-2", "color1", "color2", "color3", "color4", "color5"])
+        spectral_df.to_csv(os.path.join(spectral_info_folder, f"spectral_chunk_{str(number).zfill(5)}.csv"))
+        return
+
+    points = points.astype('float32')
 
 
 def extract_box_intensities_resolution_mismatch(points):
@@ -564,9 +584,12 @@ try:
     os.makedirs(spectral_info_folder)
 except FileExistsError:
     pass
+
 dbscan_folder = os.path.join(str(Path(chunks_folder).parent), "dbscan")  # for background filtered csv files
+
 if not os.path.exists(dbscan_folder):
-     os.makedirs(dbscan_folder)
+    os.makedirs(dbscan_folder)
+
 xy_factor = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
 zy_factor = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
 number = int(re.findall(r"\d+", os.path.basename(chunk_file))[-1])

@@ -8,3 +8,6 @@ COLOR_RESOLUTION = [1.34, 1.54, 2.0]
 CUBE_SIZE = 10  # um to cut around nuclei
 GPU_ENV_NAME = 'pytorch'
 LNODE_ENV_NAME = 'deepblink2'
+SCALE_USED_FOR_MASKS = 2
+DENSE_REGIONS_MASK = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/AI7_EH5f3/output/bright_mask.tif'
+FOREGROUND_MASK = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/AI7_EH5f3/output/bg_fg_mask.tif'
