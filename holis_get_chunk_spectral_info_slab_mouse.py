@@ -477,10 +477,10 @@ def extract_volume_intensities():
 
     # !!! Assuming that resolutions are the same for nuclei and colors
     # rescaling color data to isotropic space
-    ch2_np = (resize(color_info_zarray[0, 0, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint8')
-    ch3_np = (resize(color_info_zarray[0, 1, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint8')
-    ch4_np = (resize(color_info_zarray[0, 2, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint8')
-    ch5_np = (resize(color_info_zarray[0, 3, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint8')
+    ch2_np = (resize(color_info_zarray[0, 0, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint16')
+    ch3_np = (resize(color_info_zarray[0, 1, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint16')
+    ch4_np = (resize(color_info_zarray[0, 2, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint16')
+    ch5_np = (resize(color_info_zarray[0, 3, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint16')
 
     # Construct the centroid dataframe from ch1
     nuclei_df = get_props(nuclei_masks_np, ch1_np)
