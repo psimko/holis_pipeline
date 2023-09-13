@@ -411,6 +411,7 @@ def get_props(mask, image):
         )
     )
     region_props = region_props.round(2)
+    region_props['label'] = list(range(labels.min(), labels.max() + 1))
     return region_props
 
 

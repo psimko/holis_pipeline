@@ -313,10 +313,13 @@ def merge_spectral_info_df(origin_coords, bg_chunks):
     # read them (without dask)
     print("reading")
     to_merge = []
+    labels_max = 0
     for df_file in dfs:
         current_chunk = int(re.findall(r"\d+", os.path.basename(df_file))[-1])
         print("processing", current_chunk)
         df = pd.read_csv(df_file)
+        df['label'] += labels_max
+        labels_max = df['label'].max()
         to_merge.append(df)
 
     print("done reading. Concatenating")
@@ -353,6 +356,8 @@ def main():
     patchify_chunks_shape = (*list(ratios), *CHUNK_SIZE)
     origin_coords = get_origin_coords(3, patchify_chunks_shape, CHUNK_SIZE)
     chunk_indices = get_chunk_indices(origin_coords, CHUNK_SIZE)
+    np.save(os.path.join(OUTPUT_DIR, "origin_coords.npy"), origin_coords)
+    np.save(os.path.join(OUTPUT_DIR, "chunk_indices.npy"), chunk_indices)
 
     yx_ratio = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]  # make resolution isotropic, equal y resolution (only for spot detection)
     yz_ratio = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]  # make resolution isotropic, equal y resolution (only for spot detection)
