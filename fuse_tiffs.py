@@ -10,6 +10,7 @@ import re
 import sys
 import glob
 import math
+import shutil
 import numpy as np
 from natsort import natsorted
 from skimage import io, img_as_float32, img_as_uint
@@ -254,6 +255,8 @@ def run():
             
         plane = client.gather(complete)
 
+    organize_composites(out_folder, channel_prefix, min_c, max_c)
+
 
 def fuse_in_x(in_dir, out_dir):
     """
@@ -318,6 +321,25 @@ def fuse_in_x(in_dir, out_dir):
                 complete = [x for x in complete if x.status != 'finished']
 
         plane = client.gather(complete)
+
+
+def organize_composites(out_folder, channel_prefix, channel_min, channel_max):
+    all_composites = sorted(glob.glob(os.path.join(out_folder, '*.tif')))
+    nuclei_folder = os.path.join(out_folder, "nuclei")
+    colors_folder = os.path.join(out_folder, "colors")
+    for channel in range(channel_min, channel_max + 1):
+        channel_composites = [x for x in all_composites if f"{channel_prefix}{channel}" in x]
+        print(f"Number of channel {channel} composites: {len(channel_composites)}")
+        if channel == 1:
+            dest = os.path.join(nuclei_folder, str(channel))
+            if not os.path.exists(dest):
+                os.makedirs(dest)
+            res = [shutil.move(f, dest) for f in channel_composites]
+        else:
+            dest = os.path.join(colors_folder, str(channel))
+            if not os.path.exists(dest):
+                os.makedirs(dest)
+            res = [shutil.move(f, dest) for f in channel_composites]
 
 
 if __name__ == '__main__':
