@@ -65,7 +65,7 @@ def write_detection_task_for_slurm(img_path, output_path):
         f.write('module load miniconda3\n')
         f.write(f'source activate {GPU_ENV_NAME}')
         f.write('\n')
-        f.write(f'python {work_dir}/predict_w_patchify_2.py ')  # TODO
+        f.write(f'python {work_dir}/predict_dynamicThreshold_fast.py ')  # TODO
         f.write(MODEL_PATH)
         f.write(' ')
         f.write(img_path)
