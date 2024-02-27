@@ -381,9 +381,11 @@ def main():
     tstart = datetime.now()
     log.info(f"START TIME: {tstart}")
 
+    # extract low-resolution masks for foreground and bright spots
     get_chunks_with_background()
     get_chunks_with_bright_signal()
 
+    # read the nuclei channel (not into memory)
     location = os.path.join(NUCLEI_DIR, f'scale{resolution_level}')
     store = H5_Nested_Store(location)
     zarray = zarr.open(store)
@@ -392,6 +394,7 @@ def main():
     log.info(f"3D stack shape {lazy_tiff_stack.shape}")
     print("3D stack shape", lazy_tiff_stack.shape)
 
+    # create folders for chunks and for SLURM jobs
     chunks_folder = os.path.join(OUTPUT_DIR, f'scale_{resolution_level}', 'chunks_resized')
     if not os.path.exists(chunks_folder):
         os.makedirs(chunks_folder)
@@ -399,7 +402,9 @@ def main():
     if not os.path.exists(jobs_folder):
         os.makedirs(jobs_folder)
 
-    print("Chunks folder", chunks_folder)
+    log.info("Chunks folder", chunks_folder)
+
+    # Get coordinates and indices of each chunk
     ratios = (np.array(lazy_tiff_stack.shape) / np.array(CHUNK_SIZE)).astype('int') + 1
     patchify_chunks_shape = (*list(ratios), *CHUNK_SIZE)
     origin_coords = get_origin_coords(3, patchify_chunks_shape, CHUNK_SIZE)
@@ -454,6 +459,7 @@ def main():
             int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(chunks_folder, "*.tif"))
         ])
         chunk_numbers_set = extracted_chunks - sent_tasks
+        # actual submission happens here:
         detect_cells_deepblink_slurm(list(chunk_numbers_set), chunks_folder, jobs_folder)
         sent_tasks.update(chunk_numbers_set)
         remaining_chunks = fg_chunks - sent_tasks
@@ -477,6 +483,7 @@ def main():
             int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(chunks_folder, "*.csv"))
         ])
         chunk_numbers_set = detection_done - sent_tasks
+        # actual submission happens here:
         get_spectral_info_slurm(list(chunk_numbers_set), chunks_folder, jobs_folder, spectral_info_folder)
         sent_tasks.update(chunk_numbers_set)
         remaining_chunks = fg_chunks - sent_tasks
@@ -505,7 +512,8 @@ def main():
     log.info(f"Time spent on extraction + nuclei detection + spectral info: {tfin_spectral_info - tstart}")
 
 
-    # merge and save the final df
+    # ================= Merge and save the final df =================
+
     log.info("Merging spectral info df")
     df = merge_spectral_info_df(origin_coords, bg_chunks)
     # log time when finished
