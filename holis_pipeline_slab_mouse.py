@@ -382,8 +382,9 @@ def main():
     log.info(f"START TIME: {tstart}")
 
     # extract low-resolution masks for foreground and bright spots
-    get_chunks_with_background()
-    get_chunks_with_bright_signal()
+    if not os.path.exists(os.path.join(OUTPUT_DIR, 'scale_x')):
+        get_chunks_with_background()
+        get_chunks_with_bright_signal()
 
     # read the nuclei channel (not into memory)
     location = os.path.join(NUCLEI_DIR, f'scale{resolution_level}')
