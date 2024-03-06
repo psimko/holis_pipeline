@@ -60,7 +60,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def write_detection_task_for_slurm(img_path, output_path):
+def write_detection_task_for_slurm(chunk_number, output_path):
     with open(output_path, 'w') as f:
         f.write('#!/bin/bash\n')
         f.write('module load miniconda3\n')
@@ -69,7 +69,7 @@ def write_detection_task_for_slurm(img_path, output_path):
         f.write(f'python {work_dir}/predict_dynamicThreshold_fast.py ')  # TODO
         f.write(MODEL_PATH)
         f.write(' ')
-        f.write(img_path)
+        f.write(str(chunk_number))
         f.write('\n')
 
 
@@ -78,16 +78,18 @@ def submit_slurm_task_gpu(path_to_task):
     subprocess.run(command)
 
 
-def detect_cells_deepblink_slurm(chunk_numbers, chunks_folder, jobs_folder):
+def detect_cells_deepblink_slurm(chunk_numbers, jobs_folder):
     for chunk_number in chunk_numbers:
-        chunk_file = os.path.join(chunks_folder, f"chunk_{str(chunk_number).zfill(5)}.tif")
-        detections_file_name = os.path.join(os.path.dirname(chunk_file), f"napari_{os.path.basename(chunk_file).replace('.tif', '.csv')}")
+        detection_folder = os.path.join(OUTPUT_DIR, 'detection')
+        if not os.path.exists(detection_folder):
+            os.makedirs(detection_folder)
+        detections_file_name = os.path.join(detection_folder, f"napari_chunk_{str(chunk_number).zfill(5)}.csv")
         if os.path.exists(detections_file_name):
             print(f"Skipping chunk {chunk_number}")
             continue
         print(f"Submitting gpu task for chunk {chunk_number}")
         task_path = os.path.join(jobs_folder, f"detect_chunk_{str(chunk_number).zfill(5)}.sh")
-        write_detection_task_for_slurm(chunk_file, task_path)
+        write_detection_task_for_slurm(chunk_number, task_path)
         submit_slurm_task_gpu(task_path)
 
 
@@ -230,20 +232,20 @@ def submit_slurm_task_compute(task_path):
     subprocess.run(command)
 
 
-def write_spectral_extraction_script_for_slurm(chunk_file, task_path):
+def write_spectral_extraction_script_for_slurm(chunk_number, task_path):
     with open(task_path, 'w') as f:
         f.write('#!/bin/bash\n')
         f.write('module load miniconda3\n')
         f.write(f'source activate {LNODE_ENV_NAME}')
         f.write('\n')
         f.write(f'python {work_dir}/holis_get_chunk_spectral_info_slab_mouse.py ')
-        f.write(chunk_file)
+        f.write(str(chunk_number))
         f.write(' ')
         f.write(NUCLEI_DIR)
         f.write('\n')
 
 
-def get_spectral_info_slurm(chunk_numbers, chunks_folder, jobs_folder, spectral_info_folder):
+def get_spectral_info_slurm(chunk_numbers, jobs_folder, spectral_info_folder):
     # exclude already saved chunks
     # write bash scripts
     # submit to compute partition
@@ -251,55 +253,8 @@ def get_spectral_info_slurm(chunk_numbers, chunks_folder, jobs_folder, spectral_
         if os.path.exists(os.path.join(spectral_info_folder, f"spectral_chunk_{str(chunk_number).zfill(5)}.csv")):
             print(f"Skipping chunk {chunk_number}")
             continue
-        chunk_file = os.path.join(chunks_folder, f"chunk_{str(chunk_number).zfill(5)}.tif")
         task_path = os.path.join(jobs_folder, f"get_color_info_chunk_{str(chunk_number).zfill(5)}.sh")
-        write_spectral_extraction_script_for_slurm(chunk_file, task_path)
-        submit_slurm_task_compute(task_path)
-
-
-def write_chunk_extraction_script_for_slurm(chunk_file, task_path):
-    with open(task_path, 'w') as f:
-        f.write('#!/bin/bash\n')
-        f.write('module load miniconda3\n')
-        f.write(f'source activate {LNODE_ENV_NAME}')
-        f.write('\n')
-        f.write(f'python {work_dir}/holis_extract_resized_chunk_slab_mouse.py ')
-        f.write(chunk_file)
-        f.write(' ')
-        f.write(NUCLEI_DIR)
-        f.write('\n')
-
-
-def write_chunk_inpainting_script_for_slurm(chunk_file, task_path):
-    with open(task_path, 'w') as f:
-        f.write('#!/bin/bash\n')
-        f.write('module load miniconda3\n')
-        f.write(f'source activate {LNODE_ENV_NAME}')
-        f.write('\n')
-        f.write(f'python {work_dir}/holis_extract_resized_inpainted_chunk_slab_mouse.py ')
-        f.write(chunk_file)
-        f.write(' ')
-        f.write(NUCLEI_DIR)
-        f.write('\n')
-
-
-def save_resized_chunks_slurm(chunks_folder, jobs_folder, chunks_to_save):
-    for chunk_number in chunks_to_save:
-        chunk_file = os.path.join(chunks_folder, f"chunk_{str(chunk_number).zfill(5)}.tif")
-        task_path = os.path.join(jobs_folder, f"extract_chunk_{str(chunk_number).zfill(5)}.sh")
-        # write bash script (slurm task)
-        write_chunk_extraction_script_for_slurm(chunk_file, task_path)
-        # send it to compute
-        submit_slurm_task_compute(task_path)
-
-
-def save_resized_inpainted_chunks_slurm(chunks_folder, jobs_folder,  chunks_to_save):
-    for chunk_number in chunks_to_save:
-        chunk_filename = os.path.join(chunks_folder, f"chunk_{str(chunk_number).zfill(5)}.tif")
-        task_path = os.path.join(jobs_folder, f"extract_chunk_{str(chunk_number).zfill(5)}.sh")
-        # write bash script (slurm task)
-        write_chunk_inpainting_script_for_slurm(chunk_filename, task_path)
-        # send it to compute
+        write_spectral_extraction_script_for_slurm(chunk_number, task_path)
         submit_slurm_task_compute(task_path)
 
 
@@ -396,14 +351,12 @@ def main():
     print("3D stack shape", lazy_tiff_stack.shape)
 
     # create folders for chunks and for SLURM jobs
-    chunks_folder = os.path.join(OUTPUT_DIR, f'scale_{resolution_level}', 'chunks_resized')
-    if not os.path.exists(chunks_folder):
-        os.makedirs(chunks_folder)
-    jobs_folder = os.path.join(OUTPUT_DIR, f'scale_{resolution_level}', 'slurm_jobs')
+    detection_folder = os.path.join(OUTPUT_DIR, 'detection')
+    if not os.path.exists(detection_folder):
+        os.makedirs(detection_folder)
+    jobs_folder = os.path.join(OUTPUT_DIR, 'slurm_jobs')
     if not os.path.exists(jobs_folder):
         os.makedirs(jobs_folder)
-
-    log.info("Chunks folder", chunks_folder)
 
     # Get coordinates and indices of each chunk
     ratios = (np.array(lazy_tiff_stack.shape) / np.array(CHUNK_SIZE)).astype('int') + 1
@@ -413,38 +366,8 @@ def main():
     np.save(os.path.join(OUTPUT_DIR, "origin_coords.npy"), origin_coords)
     np.save(os.path.join(OUTPUT_DIR, "chunk_indices.npy"), chunk_indices)
 
-    yx_ratio = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]  # make resolution isotropic, equal y resolution (only for spot detection)
-    yz_ratio = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]  # make resolution isotropic, equal y resolution (only for spot detection)
-
     bg_chunks = set(np.load(os.path.join(OUTPUT_DIR, "zero_chunks.npy")))
     bright_chunks = set(np.load(os.path.join(OUTPUT_DIR, "bright_chunks.npy")))
-
-    # ================= Save foreground chunks with no bright spots in them ================
-
-    # The chunks are saved at isotropic resolution for deepblink
-    chunks_to_save = [
-        x for x in range(len(chunk_indices))
-        if not os.path.exists(os.path.join(chunks_folder, f"chunk_{str(x).zfill(5)}.tif"))
-        and x not in bg_chunks
-        and x not in bright_chunks
-    ]
-    save_resized_chunks_slurm(chunks_folder, jobs_folder, chunks_to_save)
-    log.info(f"Submitted all jobs to extract normal foreground chunks")
-
-    # ================= Save foreground chunks with bright spots in them =================
-
-    # The chunks are saved at isotropic resolution and inpainted with average where the signal is too bright
-    chunks_to_save = [
-        x for x in range(len(chunk_indices))
-        if not os.path.exists(os.path.join(chunks_folder, f"chunk_{str(x).zfill(5)}.tif"))
-        and x not in bg_chunks
-        and x in bright_chunks
-    ]
-    save_resized_inpainted_chunks_slurm(chunks_folder, jobs_folder, chunks_to_save)
-    log.info(f"Submitted all jobs to extract foreground chunks with bright spots")
-
-    tstart_extraction = datetime.now()
-    log.info(f"Time when all extraction jobs were submitted: {tstart_extraction}")
 
     # ================= Create nuclei detection jobs =================
 
@@ -452,40 +375,24 @@ def main():
     # for extracted chunks generate and submit nuclei detection jobs
     fg_chunks = set([x for x in range(len(chunk_indices)) if x not in bg_chunks])
     log.info(f"Total foreground chunks: {len(fg_chunks)}")
-    sent_tasks = set()
-    remaining_chunks = fg_chunks.copy()
-    while len(remaining_chunks):
-        print("Chunks remaining to be extracted", len(remaining_chunks))
-        extracted_chunks = set([
-            int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(chunks_folder, "*.tif"))
-        ])
-        chunk_numbers_set = extracted_chunks - sent_tasks
-        # actual submission happens here:
-        detect_cells_deepblink_slurm(list(chunk_numbers_set), chunks_folder, jobs_folder)
-        sent_tasks.update(chunk_numbers_set)
-        remaining_chunks = fg_chunks - sent_tasks
-        time.sleep(2)
-
-    log.info("All chunks were extracted")
-    tfin_extraction = datetime.now()
-    log.info(f"Time spent on extraction: {tfin_extraction - tstart}")
+    detect_cells_deepblink_slurm(list(fg_chunks), jobs_folder)
     log.info("All nuclei detection tasks were submitted")
 
     # ================= Create spectral extraction jobs =================
 
     # check which csv files have been generated
     # send these chunks for spectral information
-    spectral_info_folder = os.path.join(OUTPUT_DIR, f'scale_{resolution_level}', 'spectral_info')
+    spectral_info_folder = os.path.join(OUTPUT_DIR, 'spectral_info')
     sent_tasks = set()
     remaining_chunks = fg_chunks.copy()
     while len(remaining_chunks):
         print("Chunks remaining to do nuclei detection", len(remaining_chunks))
         detection_done = set([
-            int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(chunks_folder, "*.csv"))
+            int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(detection_folder, "*.csv"))
         ])
         chunk_numbers_set = detection_done - sent_tasks
         # actual submission happens here:
-        get_spectral_info_slurm(list(chunk_numbers_set), chunks_folder, jobs_folder, spectral_info_folder)
+        get_spectral_info_slurm(list(chunk_numbers_set), jobs_folder, spectral_info_folder)
         sent_tasks.update(chunk_numbers_set)
         remaining_chunks = fg_chunks - sent_tasks
         time.sleep(2)
