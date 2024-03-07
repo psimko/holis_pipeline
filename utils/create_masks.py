@@ -18,7 +18,7 @@ from skimage.transform import resize
 
 from .settings import (
     CHUNK_SIZE, NUCLEI_DIR, OUTPUT_DIR, SCALE_USED_FOR_MASKS, NUCLEI_RESOLUTION,
-    DENSE_REGIONS_MASK, FOREGROUND_MASK
+    DENSE_REGIONS_MASK, FOREGROUND_MASK, SCALE
 )
 
 
@@ -83,8 +83,11 @@ def get_chunks_with_bright_signal():
         result = dask.compute(saved)
         # np.save(os.path.join(OUTPUT_DIR, f'scale_{scale}', 'chunks_bright1.npy'), np.array(result))
         bg_chunks = [x for x in range(len(result[0])) if result[0][x]]
-        np.save(os.path.join(OUTPUT_DIR, 'bright_chunks.npy'), bg_chunks)
-        with open(os.path.join(OUTPUT_DIR, 'bright_chunks.txt'), 'w') as f:
+        output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')
+        if not os.path.exists(output_folder_scale):
+            os.makedirs(output_folder_scale)
+        np.save(os.path.join(output_folder_scale, 'bright_chunks.npy'), bg_chunks)
+        with open(os.path.join(output_folder_scale, 'bright_chunks.txt'), 'w') as f:
             f.write(str(bg_chunks))
 
     scale = SCALE_USED_FOR_MASKS
@@ -147,8 +150,11 @@ def get_chunks_with_background():
         result = dask.compute(saved)
         # np.save(os.path.join(OUTPUT_DIR, f'scale_{scale}', 'zero_chunks1.npy'), np.array(result))
         bg_chunks = [x for x in range(len(saved)) if result[0][x]]
-        np.save(os.path.join(OUTPUT_DIR, 'zero_chunks.npy'), bg_chunks)
-        with open(os.path.join(OUTPUT_DIR, 'zero_chunks.txt'), 'w') as f:
+        output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')
+        if not os.path.exists(output_folder_scale):
+            os.makedirs(output_folder_scale)
+        np.save(os.path.join(output_folder_scale, 'zero_chunks.npy'), bg_chunks)
+        with open(os.path.join(output_folder_scale, 'zero_chunks.txt'), 'w') as f:
             f.write(str(bg_chunks))
 
     scale = SCALE_USED_FOR_MASKS

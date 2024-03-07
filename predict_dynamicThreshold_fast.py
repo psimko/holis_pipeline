@@ -10,6 +10,13 @@ import torch.nn.functional as G
 from torchvision.transforms import ToTensor
 from skimage import measure
 import pandas as pd
+from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
+import zarr
+import dask.array as da
+from skimage.transform import resize
+
+from utils.chunks import get_chunk_indices, get_origin_coords
+from utils.settings import *
 
 
 class UNet3D(nn.Module):
@@ -76,14 +83,76 @@ def normalize_image_stack(image_stack):
     return normalized_stack
 
 
-model_path = sys.argv[1]
-chunk_file = sys.argv[2]
-out_filename = os.path.join(os.path.dirname(chunk_file), f'mask_{os.path.basename(chunk_file)}')
-centroids_filename = os.path.join(os.path.dirname(chunk_file), f"napari_{os.path.basename(chunk_file).replace('.tif', '.csv')}")
+def get_chunk(ind):
+    chunk = np.array(lazy_data[ind[0], ind[1], ind[2]])
+    chunk_dtype = chunk.dtype
+    chunk = (
+        resize(
+            chunk,
+            (int(round(chunk.shape[0] * yz_ratio)), chunk.shape[1], int(round(chunk.shape[2] * yx_ratio)))
+        ) * 65535  # TODO - handle all data types with their respective maxima
+    ).astype(chunk_dtype)
+    return chunk
 
-# Load the TIFF stack
-stack = tifffile.imread(chunk_file).astype('float32')
+
+def get_inpainted_chunk(ind):
+    chunk = np.array(lazy_data[ind[0], ind[1], ind[2]])
+    chunk_dtype = chunk.dtype
+    chunk = (
+            resize(
+                chunk,
+                (int(round(chunk.shape[0] * yz_ratio)), chunk.shape[1], int(round(chunk.shape[2] * yx_ratio)))
+            ) * 65535
+    ).astype(chunk_dtype)
+    low_res_mask_folder = os.path.join(OUTPUT_DIR, 'scale_x', 'bright_spots_mask_resized')
+    mask = tifffile.imread(os.path.join(low_res_mask_folder, f'chunk_{str(chunk_number).zfill(5)}.tif'))  # TODO extract masks on the fly
+    mask = resize(mask, chunk.shape)
+    chunk[mask == 0] = np.median(chunk[mask == 1])
+    return chunk
+
+
+print("-------------------- NUCLEI DETECTION ------------------")
+model_path = sys.argv[1]
+chunk_number = sys.argv[2]
+detection_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'detection')
+try:
+    os.makedirs(detection_folder)
+except FileExistsError:
+    pass
+
+masks_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'detection_masks')
+try:
+    os.makedirs(masks_folder)
+except FileExistsError:
+    pass
+
+out_filename = os.path.join(masks_folder, f'mask_chunk_{str(chunk_number).zfill(5)}.tif')
+centroids_filename = os.path.join(detection_folder, f"napari_chunk_{str(chunk_number).zfill(5)}.csv")
+
+# Read the chunk from zarr
+
+location = os.path.join(NUCLEI_DIR, f'scale{SCALE}')
+store = H5_Nested_Store(location)
+zarray = zarr.open(store)
+dask_zarray = da.array(zarray)
+lazy_tiff_stack = dask_zarray[0, 0, :, :, :]
+ratios = (np.array(lazy_tiff_stack.shape) / np.array(CHUNK_SIZE)).astype('int') + 1
+patchify_chunks_shape = (*list(ratios), *CHUNK_SIZE)
+origin_coords = get_origin_coords(3, patchify_chunks_shape, CHUNK_SIZE)
+chunk_indices = get_chunk_indices(origin_coords, CHUNK_SIZE)
+lazy_data = dask_zarray[0, 0, :, :, :]
+ind = chunk_indices[int(chunk_number)]
+yx_ratio = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
+yz_ratio = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
+bright_chunks = set(np.load(os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "bright_chunks.npy")))
+if int(chunk_number) not in bright_chunks:
+    stack = get_chunk(ind)
+else:
+    stack = get_inpainted_chunk(ind)
+
 print(stack.shape)
+
+stack = stack.astype('float32')
 
 # preprocess chunk
 # stack = normalize_image_stack(stack)
