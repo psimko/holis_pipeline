@@ -108,7 +108,7 @@ def remove_background(number, nuclei_chunk_shape):
     fg_mask_folder = os.path.join(OUTPUT_DIR, 'scale_x', 'mask_resized')
     fg_mask_stack = tifffile.imread(os.path.join(fg_mask_folder, f"chunk_{str(number).zfill(5)}.tif"))
     fg_mask_stack = resize(fg_mask_stack, nuclei_chunk_shape).astype(np.uint8)
-    nuclei_mask_path = os.path.join(OUTPUT_DIR, 'detection_masks', f"mask_chunk_{str(number).zfill(5)}.tif")
+    nuclei_mask_path = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'detection_masks', f"mask_chunk_{str(number).zfill(5)}.tif")
     nuclei_mask = tifffile.imread(nuclei_mask_path)
     nuclei_mask *= fg_mask_stack
     tifffile.imwrite(nuclei_mask_path, nuclei_mask)
@@ -400,7 +400,7 @@ def extract_volume_intensities(nuclei_chunk_shape, number):
     Assuming that resolutions are the same for nuclei and color channels
     """
     # find mask by chunk number
-    NUCLEI_MASK_PATH = os.path.join(OUTPUT_DIR, "detection_masks", f"mask_chunk_{str(number).zfill(5)}.tif")
+    NUCLEI_MASK_PATH = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "detection_masks", f"mask_chunk_{str(number).zfill(5)}.tif")
     # rescale points to ome-zarr data space
 
     nuclei_masks_np = tifffile.imread(NUCLEI_MASK_PATH)  # mask is in the isotropic space
@@ -496,20 +496,20 @@ def process_chunk(number):
 print("------------- EXTRACTING SPECTRAL INFO ------------")
 chunk_number = sys.argv[1]
 
-spectral_info_folder = os.path.join(OUTPUT_DIR, "spectral_info")
+spectral_info_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "spectral_info")
 try:
     os.makedirs(spectral_info_folder)
 except FileExistsError:
     pass
 
-dbscan_folder = os.path.join(OUTPUT_DIR, "dbscan")  # for background filtered csv files TODO
+dbscan_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "dbscan")  # for background filtered csv files TODO
 
 if not os.path.exists(dbscan_folder):
     os.makedirs(dbscan_folder)
 
 xy_factor = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
 zy_factor = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
-location = os.path.join(NUCLEI_DIR, 'scale0')
+location = os.path.join(NUCLEI_DIR, f'scale{SCALE}')
 store = H5_Nested_Store(location)
 zarray = zarr.open(store)
 dask_zarray = da.array(zarray)
@@ -524,7 +524,7 @@ lazy_data = dask_zarray[0, 1:, :, :, :]
 nuclei_box_size = np.round(CUBE_SIZE / np.array(NUCLEI_RESOLUTION)).astype(int)  # 10 um box
 ind = chunk_indices[int(chunk_number)]
 
-color_info_location = os.path.join(COLORS_DIR, 'scale0')
+color_info_location = os.path.join(COLORS_DIR, f'scale{SCALE}')
 color_info_store = H5_Nested_Store(color_info_location)
 color_info_zarray = zarr.open(color_info_store)
 color_info_shape = color_info_zarray.shape[-3:]

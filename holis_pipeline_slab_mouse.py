@@ -3,18 +3,13 @@ Pipeline for the combinatorial mouse slab.
 
 Uses Pytorch UNet with a model trained on mouse data.
 
-1) napari_apoc segmentation with existing model (done at CBI)
-2) Compute bg chunks, save their numbers (done at CBI)
-3) compute chunks with bright spots, save their numbers (done at CBI)
-4) extract good fg chunks, resize them (with slurm)
-5) extract and inpaint fg chunks that have bright spots (with slurm)
-6) run pytorch unet on all chunks
-7) get spectral information
-8) save giant dataframe
+1) napari_apoc segmentation
+2) Compute bg chunks, save their numbers
+3) compute chunks with bright spots, save their numbers
+4) run pytorch unet on all foreground chunks
+5) get spectral information on all foreground chunks
+6) save giant dataframe with coordinates + intensities at different colors
 
-requirements to run @ BIL:
-put the .npy files for background chunks and bright chunks in the output folder
-extract scale 4 mask of bright spots (in chunks)
 """
 
 import logging
@@ -39,8 +34,6 @@ from utils.create_masks import get_chunks_with_background, get_chunks_with_brigh
 from utils.settings import *
 
 
-signal_channel = 0
-resolution_level = 0
 work_dir = os.getcwd()
 print("Working directory: ", work_dir)
 
@@ -80,7 +73,7 @@ def submit_slurm_task_gpu(path_to_task):
 
 def detect_cells_deepblink_slurm(chunk_numbers, jobs_folder):
     for chunk_number in chunk_numbers:
-        detection_folder = os.path.join(OUTPUT_DIR, 'detection')
+        detection_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'detection')
         if not os.path.exists(detection_folder):
             os.makedirs(detection_folder)
         detections_file_name = os.path.join(detection_folder, f"napari_chunk_{str(chunk_number).zfill(5)}.csv")
@@ -193,7 +186,7 @@ def merge_df_fix_wrong_scaling_no_bg(chunks_folder, origin_coords, xy_factor):
     df_column_names = ['index', 'axis-0', 'axis-1', 'axis-2']  # TODO: ndim
     df = pd.DataFrame(columns=df_column_names)
     csv_files = sorted(glob(os.path.join(chunks_folder, 'napari*.csv')))
-    bg_chunks = set(np.load(os.path.join(OUTPUT_DIR, 'zero_chunks.npy')))
+    bg_chunks = set(np.load(os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'zero_chunks.npy')))
     csv_files = [x for x in csv_files if int(re.findall(r"\d+", os.path.basename(x))[-1]) not in bg_chunks]
     print("CSV files", len(csv_files))
 
@@ -259,7 +252,7 @@ def get_spectral_info_slurm(chunk_numbers, jobs_folder, spectral_info_folder):
 
 
 def merge_spectral_info_df(origin_coords, bg_chunks):
-    spectral_info_folder = os.path.join(OUTPUT_DIR, "scale_0", "spectral_info")
+    spectral_info_folder = os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "spectral_info")
     # get all csv in spectral info folder, check their number
     dfs = sorted(glob(os.path.join(spectral_info_folder, "spectral*.csv")))
     print("total dfs", len(dfs))
@@ -283,23 +276,23 @@ def merge_spectral_info_df(origin_coords, bg_chunks):
     df = pd.concat(to_merge, ignore_index=True)
     print("Concatenated. Saving")
     # save new df
-    df.to_csv(os.path.join(OUTPUT_DIR, "scale_0", "detected_cells_pytorch_unet_bg_removed_px_w_color_info.csv"))
+    df.to_csv(os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "detected_cells_pytorch_unet_bg_removed_px_w_color_info.csv"))
     return df
 
 
 def combine_masks():
     print("Merging masks")
     chunk_indices = np.load(
-        os.path.join(OUTPUT_DIR, "chunk_indices.npy"),
+        os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "chunk_indices.npy"),
         allow_pickle=True
     )
-    store_nuclei = H5_Nested_Store(f"{NUCLEI_DIR}/scale0")
+    store_nuclei = H5_Nested_Store(f"{NUCLEI_DIR}/scale{SCALE}")
     zarray_nuclei = zarr.open(store_nuclei)
     raw_img_shape = zarray_nuclei.shape[-3:]
     combined_mask = np.zeros(raw_img_shape, dtype=np.uint8)
     masks = sorted(
         glob(
-            os.path.join(OUTPUT_DIR, "scale_0", "chunks_resized", "mask*.tif")
+            os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "detection_masks", "mask*.tif")
         )
     )
     for mask in masks:
@@ -328,7 +321,7 @@ def combine_masks():
         else:
             mask_raw_space = resize(mask_resized_space, CHUNK_SIZE) > 0
         combined_mask[chunk_slices[0], chunk_slices[1], chunk_slices[2]] = mask_raw_space
-        tifffile.imwrite(os.path.join(OUTPUT_DIR, "scale_0", "combined_mask_raw_space.tif"), combined_mask)
+        tifffile.imwrite(os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "combined_mask_raw_space.tif"), combined_mask)
 
 
 def main():
@@ -336,25 +329,31 @@ def main():
     tstart = datetime.now()
     log.info(f"START TIME: {tstart}")
 
+    nuclei_channel = 0
+
     # extract low-resolution masks for foreground and bright spots
     if not os.path.exists(os.path.join(OUTPUT_DIR, 'scale_x')):
         get_chunks_with_background()
         get_chunks_with_bright_signal()
 
+    output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')
+    if not os.path.exists(output_folder_scale):
+        os.makedirs(output_folder_scale)
+
     # read the nuclei channel (not into memory)
-    location = os.path.join(NUCLEI_DIR, f'scale{resolution_level}')
+    location = os.path.join(NUCLEI_DIR, f'scale{SCALE}')
     store = H5_Nested_Store(location)
     zarray = zarr.open(store)
     dask_zarray = da.array(zarray)
-    lazy_tiff_stack = dask_zarray[0, signal_channel, :, :, :]
+    lazy_tiff_stack = dask_zarray[0, nuclei_channel, :, :, :]
     log.info(f"3D stack shape {lazy_tiff_stack.shape}")
     print("3D stack shape", lazy_tiff_stack.shape)
 
     # create folders for chunks and for SLURM jobs
-    detection_folder = os.path.join(OUTPUT_DIR, 'detection')
+    detection_folder = os.path.join(output_folder_scale, 'detection')
     if not os.path.exists(detection_folder):
         os.makedirs(detection_folder)
-    jobs_folder = os.path.join(OUTPUT_DIR, 'slurm_jobs')
+    jobs_folder = os.path.join(output_folder_scale, 'slurm_jobs')
     if not os.path.exists(jobs_folder):
         os.makedirs(jobs_folder)
 
@@ -363,11 +362,11 @@ def main():
     patchify_chunks_shape = (*list(ratios), *CHUNK_SIZE)
     origin_coords = get_origin_coords(3, patchify_chunks_shape, CHUNK_SIZE)
     chunk_indices = get_chunk_indices(origin_coords, CHUNK_SIZE)
-    np.save(os.path.join(OUTPUT_DIR, "origin_coords.npy"), origin_coords)
-    np.save(os.path.join(OUTPUT_DIR, "chunk_indices.npy"), chunk_indices)
+    np.save(os.path.join(output_folder_scale, "origin_coords.npy"), origin_coords)
+    np.save(os.path.join(output_folder_scale, "chunk_indices.npy"), chunk_indices)
 
-    bg_chunks = set(np.load(os.path.join(OUTPUT_DIR, "zero_chunks.npy")))
-    bright_chunks = set(np.load(os.path.join(OUTPUT_DIR, "bright_chunks.npy")))
+    bg_chunks = set(np.load(os.path.join(output_folder_scale, "zero_chunks.npy")))
+    # bright_chunks = set(np.load(os.path.join(OUTPUT_DIR, "bright_chunks.npy")))
 
     # ================= Create nuclei detection jobs =================
 
@@ -382,7 +381,7 @@ def main():
 
     # check which csv files have been generated
     # send these chunks for spectral information
-    spectral_info_folder = os.path.join(OUTPUT_DIR, 'spectral_info')
+    spectral_info_folder = os.path.join(output_folder_scale, 'spectral_info')
     sent_tasks = set()
     remaining_chunks = fg_chunks.copy()
     while len(remaining_chunks):
@@ -431,7 +430,7 @@ def main():
     # drop columns with spectral info
     df = df[['axis-0', 'axis-1', 'axis-2']]
     # save df with just the coordinates
-    df.to_csv(os.path.join(OUTPUT_DIR, "scale_0", "detected_cells_pytorch_unet_bg_removed_new_px.csv"))
+    df.to_csv(os.path.join(output_folder_scale, "detected_cells_pytorch_unet_bg_removed_new_px.csv"))
 
     log.info("Combining masks")
     combine_masks()

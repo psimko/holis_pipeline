@@ -113,10 +113,10 @@ def get_inpainted_chunk(ind):
 print("-------------------- NUCLEI DETECTION ------------------")
 model_path = sys.argv[1]
 chunk_number = sys.argv[2]
-detection_folder = os.path.join(OUTPUT_DIR, 'detection')
+detection_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'detection')
 if not os.path.exists(detection_folder):
     os.makedirs(detection_folder)
-masks_folder = os.path.join(OUTPUT_DIR, 'detection_masks')
+masks_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'detection_masks')
 if not os.path.exists(masks_folder):
     os.makedirs(masks_folder)
 
@@ -125,7 +125,7 @@ centroids_filename = os.path.join(detection_folder, f"napari_chunk_{str(chunk_nu
 
 # Read the chunk from zarr
 
-location = os.path.join(NUCLEI_DIR, 'scale0')
+location = os.path.join(NUCLEI_DIR, f'scale{SCALE}')
 store = H5_Nested_Store(location)
 zarray = zarr.open(store)
 dask_zarray = da.array(zarray)
@@ -138,7 +138,7 @@ lazy_data = dask_zarray[0, 0, :, :, :]
 ind = chunk_indices[int(chunk_number)]
 yx_ratio = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
 yz_ratio = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
-bright_chunks = set(np.load(os.path.join(OUTPUT_DIR, "bright_chunks.npy")))
+bright_chunks = set(np.load(os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "bright_chunks.npy")))
 if int(chunk_number) not in bright_chunks:
     stack = get_chunk(ind)
 else:
