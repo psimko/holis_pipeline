@@ -104,6 +104,7 @@ def get_inpainted_chunk(ind):
                 (int(round(chunk.shape[0] * yz_ratio)), chunk.shape[1], int(round(chunk.shape[2] * yx_ratio)))
             ) * 65535
     ).astype(chunk_dtype)
+    low_res_mask_folder = os.path.join(OUTPUT_DIR, 'scale_x', 'bright_spots_mask_resized')
     mask = tifffile.imread(os.path.join(low_res_mask_folder, f'chunk_{str(chunk_number).zfill(5)}.tif'))  # TODO extract masks on the fly
     mask = resize(mask, chunk.shape)
     chunk[mask == 0] = np.median(chunk[mask == 1])
@@ -114,11 +115,16 @@ print("-------------------- NUCLEI DETECTION ------------------")
 model_path = sys.argv[1]
 chunk_number = sys.argv[2]
 detection_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'detection')
-if not os.path.exists(detection_folder):
+try:
     os.makedirs(detection_folder)
+except FileExistsError:
+    pass
+
 masks_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'detection_masks')
-if not os.path.exists(masks_folder):
+try:
     os.makedirs(masks_folder)
+except FileExistsError:
+    pass
 
 out_filename = os.path.join(masks_folder, f'mask_chunk_{str(chunk_number).zfill(5)}.tif')
 centroids_filename = os.path.join(detection_folder, f"napari_chunk_{str(chunk_number).zfill(5)}.csv")

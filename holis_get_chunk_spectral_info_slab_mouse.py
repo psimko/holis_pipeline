@@ -504,8 +504,10 @@ except FileExistsError:
 
 dbscan_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "dbscan")  # for background filtered csv files TODO
 
-if not os.path.exists(dbscan_folder):
+try:
     os.makedirs(dbscan_folder)
+except FileExistsError:
+    pass
 
 xy_factor = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
 zy_factor = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
