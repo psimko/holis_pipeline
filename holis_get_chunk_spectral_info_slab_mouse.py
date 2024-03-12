@@ -586,8 +586,11 @@ nuclei_box_size = np.round(CUBE_SIZE / np.array(NUCLEI_RESOLUTION)).astype(int) 
 ind = chunk_indices[number]
 
 color_info_location = os.path.join(COLORS_DIR, 'scale0')
+print(color_info_location)
 color_info_store = H5_Nested_Store(color_info_location)
 color_info_zarray = zarr.open(color_info_store)
+print(color_info_zarray)
+print(type(color_info_zarray))
 color_info_shape = color_info_zarray.shape[-3:]
 color_info_box_size = np.round(CUBE_SIZE / np.array(COLOR_RESOLUTION)).astype(int)  # 10 um box
 print("Box size", color_info_box_size)

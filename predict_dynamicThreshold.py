@@ -124,7 +124,7 @@ def prediction(model, padded_stack, patch_size, threshold):
                 with torch.no_grad():
                     stack_tensor = stack_tensor.to(device,dtype=torch.float32)
                     prediction = model.forward(stack_tensor)
-                    single_patch_prediction = (torch.sigmoid(prediction) > threshold).float() # binarize with threshold of 0.5
+                    single_patch_prediction = (torch.sigmoid(prediction) >= threshold).float() # binarize with threshold of 0.5
                     #single_patch_prediction = (prediction > 0.5)
                     single_patch_prediction = single_patch_prediction.squeeze().cpu().numpy()
                     single_patch_prediction = np.interp(single_patch_prediction, (single_patch_prediction.min(), single_patch_prediction.max()), (0, 255))                    
