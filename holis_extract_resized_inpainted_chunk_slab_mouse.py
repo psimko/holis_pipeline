@@ -55,12 +55,14 @@ def get_chunk_indices(origin_coords, chunk_size):
 
 def process_chunk(ind):
     chunk = np.array(lazy_data[ind[0], ind[1], ind[2]])
+    chunk_dtype = chunk.dtype
+    print("chunk_dtype", chunk_dtype)
     chunk = (
         resize(
             chunk,
             (int(round(chunk.shape[0] * yz_ratio)), chunk.shape[1], int(round(chunk.shape[2] * yx_ratio)))
         ) * 65535
-    ).astype("uint16")
+    ).astype(chunk_dtype)
     mask = tifffile.imread(os.path.join(low_res_mask_folder, os.path.basename(chunk_file)))
     mask = resize(mask, chunk.shape)
     chunk[mask == 0] = np.median(chunk[mask == 1])

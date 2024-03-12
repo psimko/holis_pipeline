@@ -15,12 +15,11 @@ Current version expects to have foreground/background mask and mask of very brig
 Example command for nuclei: `python -i builder.py /bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/composites/nuclei /bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/omezarr/nuclei.omehans -s 1 1 1.34 1.54 2.0 --clevel 5 -ft tif -tmp '/scratch/tmp_convert' -sk --colors green --channelLabels SytoG24 --name AI7_EH5f3 -mem 2900`<br/>
 Example command for colors: `python -i builder.py /bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/composites/colors /bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/omezarr/colors.omehans -s 1 1 1.34 1.54 2.0 --clevel 5 -ft tif -tmp '/scratch/tmp_convert' -sk --colors green yellow orange red --channelLabels NeuN GAD1_ACTA2 PV_GFAP nNOS_lba1 --name AI7_EH5f3 -mem 2900`
 5) From ome-zarr, extract low resolution level (typically scale 2-4), using `extract_low_resolution` function from `holis_segment_foreground_and_cerebellum.py` script.
-6) Create the foreground/background mask and mask of very bright signal areas on low-resolution version of the data, using napari_apoc plugin and save to the output folder with names "bg_fg_mask.tif" and "bright_mask.tif".
-7) Generate masks for all the chunks by running the `holis_segment_foreground_and_cerebellum.py` script.
-It will create the masks in the output folder, in the subfolder called scale_x
-8) Change the holis_pipeline/utils/settings.py file to specify the required parameters
-9) run `interact` to get to a large-memory-node, then `module load miniconda3`
-10) Activate your large-memory-node environment
-11) Run the pipeline: `python_holis_pipeline_slab_mouse.py`
-12) Re-run if not all spectral information jobs got submitted
-13) Once it's built the final csv file, find it at your output directory/scale_0/
+6) Create the foreground/background mask and mask of very bright signal areas on low-resolution version of the data, using napari_apoc plugin, and specify paths to them in the `holis_pipeline/utils/settings.py` file. Remember to also specify the correct resolution level you used to extract these masks.
+7) Change the holis_pipeline/utils/settings.py file to specify other required parameters
+8) run `interact` to get to a large-memory-node, then `module load miniconda3`
+9) Activate your large-memory-node environment
+10) Run the pipeline: `python_holis_pipeline_slab_mouse.py`
+11) Re-run if not all spectral information jobs got submitted
+12) Once it's built the final csv file, find it at your output directory/scale_0/
+

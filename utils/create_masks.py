@@ -16,14 +16,38 @@ import dask
 import dask.array as da
 from skimage.transform import resize
 
+from .settings import (
+    CHUNK_SIZE, NUCLEI_DIR, OUTPUT_DIR, SCALE_USED_FOR_MASKS, NUCLEI_RESOLUTION,
+    DENSE_REGIONS_MASK, FOREGROUND_MASK, SCALE
+)
 
-DATA_DIR = sys.argv[1]
-OUTPUT_DIR = sys.argv[2]
-DEEPBLINK_CHUNK_SIZE = (40, 1700, 1700)
-signal_channel = 0
-resolution_level = 0
-RESOLUTION = [1.34, 1.54, 2.0]
-smallest_scale = int(sys.argv[3])
+
+def get_origin_coords_rounded(ndim, patchify_chunks_shape, chunk_size):
+    coords_shape = list(patchify_chunks_shape[:ndim]) + [ndim]
+    coords = np.empty(coords_shape, dtype=np.uint16)
+    print(" coords shape", coords.shape)
+    for z in range(coords.shape[0]):
+        for y in range(coords.shape[1]):
+            for x in range(coords.shape[2]):
+                coords[z, y, x, :] = np.array((
+                    int(round(z * chunk_size[0])),
+                    int(round(y * chunk_size[1])),
+                    int(round(x * chunk_size[2]))
+                ))
+    coords = np.reshape(coords, (np.prod(coords.shape[:ndim]), ndim))
+    print("final coords shape", coords.shape)
+    return coords
+
+
+def get_chunk_indices_rounded(origin_coords, chunk_size):
+    indices = []
+    for origin in list(origin_coords):
+        indices.append([
+            slice(origin[0], int(round(origin[0] + chunk_size[0])), 1),
+            slice(origin[1], int(round(origin[1] + chunk_size[1])), 1),
+            slice(origin[2], int(round(origin[2] + chunk_size[2])), 1)
+        ])
+    return indices
 
 
 def get_chunks_with_bright_signal():
@@ -31,31 +55,6 @@ def get_chunks_with_bright_signal():
     Get chunks that have bright spots in them from low-resolution mask (0=bright, 1=normal)
     :return:
     """
-    def get_origin_coords_rounded(ndim, patchify_chunks_shape, chunk_size):
-        coords_shape = list(patchify_chunks_shape[:ndim]) + [ndim]
-        coords = np.empty(coords_shape, dtype=np.uint16)
-        print(" coords shape", coords.shape)
-        for z in range(coords.shape[0]):
-            for y in range(coords.shape[1]):
-                for x in range(coords.shape[2]):
-                    coords[z, y, x, :] = np.array((
-                        int(round(z * chunk_size[0])),
-                        int(round(y * chunk_size[1])),
-                        int(round(x * chunk_size[2]))
-                    ))
-        coords = np.reshape(coords, (np.prod(coords.shape[:ndim]), ndim))
-        print("final coords shape", coords.shape)
-        return coords
-
-    def get_chunk_indices_rounded(origin_coords, chunk_size):
-        indices = []
-        for origin in list(origin_coords):
-            indices.append([
-                slice(origin[0], int(round(origin[0] + chunk_size[0])), 1),
-                slice(origin[1], int(round(origin[1] + chunk_size[1])), 1),
-                slice(origin[2], int(round(origin[2] + chunk_size[2])), 1)
-            ])
-        return indices
 
     def dask_mask_to_tiffs_resize_check_zeros(lazy_tiff_stack, chunk_indices, output_folder, yx_ratio, yz_ratio, missing_chunks):
 
@@ -84,16 +83,21 @@ def get_chunks_with_bright_signal():
         result = dask.compute(saved)
         # np.save(os.path.join(OUTPUT_DIR, f'scale_{scale}', 'chunks_bright1.npy'), np.array(result))
         bg_chunks = [x for x in range(len(result[0])) if result[0][x]]
-        np.save(os.path.join(OUTPUT_DIR, 'bright_chunks.npy'), bg_chunks)
+        output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')
+        if not os.path.exists(output_folder_scale):
+            os.makedirs(output_folder_scale)
+        np.save(os.path.join(output_folder_scale, 'bright_chunks.npy'), bg_chunks)
+        with open(os.path.join(output_folder_scale, 'bright_chunks.txt'), 'w') as f:
+            f.write(str(bg_chunks))
 
-    scale = smallest_scale
+    scale = SCALE_USED_FOR_MASKS
     scale_factor = 2 ** scale
-    tiff_stack = tifffile.imread(os.path.join(OUTPUT_DIR, f'bright_mask.tif'))
+    tiff_stack = tifffile.imread(DENSE_REGIONS_MASK)
     chunks_folder = os.path.join(OUTPUT_DIR, 'scale_x', 'bright_spots_mask_resized')
     if not os.path.exists(chunks_folder):
         os.makedirs(chunks_folder)
     lazy_tiff_stack = da.array(tiff_stack)
-    chunk_shape = list(np.array(DEEPBLINK_CHUNK_SIZE) / scale_factor)
+    chunk_shape = list(np.array(CHUNK_SIZE) / scale_factor)
     print(chunk_shape)
     rounded_chunk_shape = [int(round(chunk_shape[0])), int(round(chunk_shape[1])), int(round(chunk_shape[2]))]
     print(rounded_chunk_shape)
@@ -106,8 +110,10 @@ def get_chunks_with_bright_signal():
         x for x in range(len(chunk_indices))
         if not os.path.exists(os.path.join(chunks_folder, f"chunk_{str(x).zfill(5)}.tif"))
     ]
-    yx_ratio = float(RESOLUTION[-1]) / RESOLUTION[-2]
-    yz_ratio = float(RESOLUTION[-3]) / RESOLUTION[-2]
+    yx_ratio = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
+    yz_ratio = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
+
+    print("Creating downscaled dense region masks for chunks:\n", missing_chunks)
     dask_mask_to_tiffs_resize_check_zeros(lazy_tiff_stack, chunk_indices, chunks_folder, yx_ratio, yz_ratio, missing_chunks)
 
 
@@ -115,31 +121,6 @@ def get_chunks_with_background():
     """
     By having low resolution fg/bg mask, decide which high-res chunks belong to the bg
     """
-    def get_origin_coords_rounded(ndim, patchify_chunks_shape, chunk_size):
-        coords_shape = list(patchify_chunks_shape[:ndim]) + [ndim]
-        coords = np.empty(coords_shape, dtype=np.uint16)
-        print(" coords shape", coords.shape)
-        for z in range(coords.shape[0]):
-            for y in range(coords.shape[1]):
-                for x in range(coords.shape[2]):
-                    coords[z, y, x, :] = np.array((
-                        int(round(z * chunk_size[0])),
-                        int(round(y * chunk_size[1])),
-                        int(round(x * chunk_size[2]))
-                    ))
-        coords = np.reshape(coords, (np.prod(coords.shape[:ndim]), ndim))
-        print("final coords shape", coords.shape)
-        return coords
-
-    def get_chunk_indices_rounded(origin_coords, chunk_size):
-        indices = []
-        for origin in list(origin_coords):
-            indices.append([
-                slice(origin[0], int(round(origin[0] + chunk_size[0])), 1),
-                slice(origin[1], int(round(origin[1] + chunk_size[1])), 1),
-                slice(origin[2], int(round(origin[2] + chunk_size[2])), 1)
-            ])
-        return indices
 
     def dask_mask_to_tiffs_resize_check_zeros(lazy_tiff_stack, chunk_indices, output_folder, yx_ratio, yz_ratio, missing_chunks):
 
@@ -169,16 +150,21 @@ def get_chunks_with_background():
         result = dask.compute(saved)
         # np.save(os.path.join(OUTPUT_DIR, f'scale_{scale}', 'zero_chunks1.npy'), np.array(result))
         bg_chunks = [x for x in range(len(saved)) if result[0][x]]
-        np.save(os.path.join(OUTPUT_DIR, 'zero_chunks.npy'), bg_chunks)
+        output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')
+        if not os.path.exists(output_folder_scale):
+            os.makedirs(output_folder_scale)
+        np.save(os.path.join(output_folder_scale, 'zero_chunks.npy'), bg_chunks)
+        with open(os.path.join(output_folder_scale, 'zero_chunks.txt'), 'w') as f:
+            f.write(str(bg_chunks))
 
-    scale = smallest_scale
+    scale = SCALE_USED_FOR_MASKS
     scale_factor = 2 ** scale
-    tiff_stack = tifffile.imread(os.path.join(OUTPUT_DIR, f'bg_fg_mask.tif'))
+    tiff_stack = tifffile.imread(FOREGROUND_MASK)
     chunks_folder = os.path.join(OUTPUT_DIR, 'scale_x', 'mask_resized')
     if not os.path.exists(chunks_folder):
         os.makedirs(chunks_folder)
     lazy_tiff_stack = da.array(tiff_stack)
-    chunk_shape = list(np.array(DEEPBLINK_CHUNK_SIZE) / scale_factor)
+    chunk_shape = list(np.array(CHUNK_SIZE) / scale_factor)
     print(chunk_shape)
     rounded_chunk_shape = [int(round(chunk_shape[0])), int(round(chunk_shape[1])), int(round(chunk_shape[2]))]
     print(rounded_chunk_shape)
@@ -192,20 +178,20 @@ def get_chunks_with_background():
         x for x in range(len(chunk_indices))
         if not os.path.exists(os.path.join(chunks_folder, f"chunk_{str(x).zfill(5)}.tif"))
     ]
-    yx_ratio = float(RESOLUTION[-1]) / RESOLUTION[-2]
-    yz_ratio = float(RESOLUTION[-3]) / RESOLUTION[-2]
-    print("yx_ratio", yx_ratio)
-    print("yz_ratio", yz_ratio)
+    yx_ratio = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
+    yz_ratio = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
+
+    print("Creating downscaled fg/bg masks for chunks:\n", missing_chunks)
     dask_mask_to_tiffs_resize_check_zeros(lazy_tiff_stack, chunk_indices, chunks_folder, yx_ratio, yz_ratio, missing_chunks)
 
 
 def extract_low_resolution():
-    print("Extracting scale", smallest_scale)
-    location = os.path.join(DATA_DIR, f'scale{smallest_scale}')
+    print("Extracting scale", SCALE_USED_FOR_MASKS)
+    location = os.path.join(NUCLEI_DIR, f'scale{SCALE_USED_FOR_MASKS}')
     store = H5_Nested_Store(location)
     zarray = zarr.open(store)
     data = zarray[0, 0, :, :, :]
-    tifffile.imwrite(os.path.join(OUTPUT_DIR, f"scale{smallest_scale}_stack.tif"), data)
+    tifffile.imwrite(os.path.join(OUTPUT_DIR, f"scale{SCALE_USED_FOR_MASKS}_stack.tif"), data)
 
 
 if __name__ == "__main__":
@@ -217,7 +203,7 @@ if __name__ == "__main__":
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
 
-    if not os.path.exists(os.path.join(OUTPUT_DIR, f"scale{smallest_scale}_stack.tif")):
+    if not os.path.exists(os.path.join(OUTPUT_DIR, f"scale{SCALE_USED_FOR_MASKS}_stack.tif")):
         extract_low_resolution()
 
     if not os.path.exists(os.path.join(OUTPUT_DIR, "bg_fg_mask.tif")) or not os.path.exists(os.path.join(OUTPUT_DIR, "bright_mask.tif")):

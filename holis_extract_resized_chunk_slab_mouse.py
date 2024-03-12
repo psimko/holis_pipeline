@@ -55,14 +55,15 @@ def get_chunk_indices(origin_coords, chunk_size):
 
 def process_chunk(ind):
     chunk = np.array(lazy_data[ind[0], ind[1], ind[2]])
+    chunk_dtype = chunk.dtype
+    print("chunk_dtype", chunk_dtype)
     chunk = (
         resize(
             chunk,
             (int(round(chunk.shape[0] * yz_ratio)), chunk.shape[1], int(round(chunk.shape[2] * yx_ratio)))
-        ) * 65535
-    ).astype("uint16")
+        ) * 65535  # TODO - handle all data types with their respective maxima
+    ).astype(chunk_dtype)
     tifffile.imwrite(chunk_file, chunk)
-    # tifffile.imwrite(os.path.join(output_folder, f"chunk_{str(number).zfill(5)}.tif"), chunk)
 
 
 chunk_file = sys.argv[1]

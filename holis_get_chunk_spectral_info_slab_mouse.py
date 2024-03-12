@@ -15,45 +15,8 @@ from sklearn.cluster import DBSCAN
 from stack_to_multiscale_ngff.archived_nested_store import Archived_Nested_Store
 from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 
+from utils.chunks import get_chunk_indices, get_origin_coords
 from utils.settings import *
-
-
-def get_origin_coords(ndim, patchify_chunks_shape, chunk_size):
-    """
-    Get coordinates of each chunk origin.
-
-    TODO: only 3D now, make compatible with 2D
-
-    :param ndim:
-    :param chunk_shape:
-    :param patches_shape:
-    :return:
-    """
-    coords_shape = list(patchify_chunks_shape[:ndim]) + [ndim]
-    coords = np.empty(coords_shape, dtype=np.uint16)
-    print(" coords shape", coords.shape)
-    for z in range(coords.shape[0]):
-        for y in range(coords.shape[1]):
-            for x in range(coords.shape[2]):
-                coords[z, y, x, :] = np.array((
-                    z * chunk_size[0],
-                    y * chunk_size[1],
-                    x * chunk_size[2]
-                ))
-    coords = np.reshape(coords, (np.prod(coords.shape[:ndim]), ndim))
-    print("final coords shape", coords.shape)
-    return coords
-
-
-def get_chunk_indices(origin_coords, chunk_size):
-    indices = []
-    for origin in list(origin_coords):
-        indices.append([
-            slice(origin[0], origin[0] + chunk_size[0], 1),
-            slice(origin[1], origin[1] + chunk_size[1], 1),
-            slice(origin[2], origin[2] + chunk_size[2], 1)
-        ])
-    return indices
 
 
 def get_box_slicing(z, y, x, img_shape, box_size):
@@ -110,40 +73,6 @@ def run_dbscan_on_chunk(df):
     return df
 
 
-def convert_to_napari_format(chunk_file):
-    """
-    Change columns in csv file to make it readable with napari.
-
-    :param chunks_folder:
-    :return:
-    """
-    csv_file = chunk_file.replace('.tif', '.csv')
-    print("Converting", csv_file)
-    napari_csv_file_path = os.path.join(os.path.dirname(csv_file), f"napari_{os.path.basename(csv_file)}")
-    if os.path.exists(napari_csv_file_path):
-        return pd.read_csv(napari_csv_file_path)
-    try:
-        df = pd.read_csv(csv_file)
-    except pd.errors.EmptyDataError as e:
-        print("Warning: ", e)
-        return
-    df2 = pd.DataFrame()
-    df2['index'] = list(range(df.shape[0]))  # TODO
-    try:
-        zvals = df['z'].tolist()
-        yvals = df['y [px]'].tolist()
-        xvals = df['x [px]'].tolist()
-    except KeyError as e:
-        print(e)
-        return
-
-    df2['axis-0'] = zvals
-    df2['axis-1'] = xvals
-    df2['axis-2'] = yvals
-    df2.to_csv(napari_csv_file_path)
-    return df2
-
-
 def remove_background_spots(points, nuclei_chunk_shape):
     # print("Removing BG")
     # print("Converting to numpy")
@@ -162,23 +91,24 @@ def remove_background_spots(points, nuclei_chunk_shape):
     filtered_cells_np = np.asarray(zipped_nz)
     print("filtered_cells_np", filtered_cells_np.shape)
     print("Generating csv")
-    filtered_cells_df = pd.DataFrame()
-    filtered_cells_df['axis-0'] = list(filtered_cells_np[:, 0])
-    filtered_cells_df['axis-1'] = list(filtered_cells_np[:, 1])
-    filtered_cells_df['axis-2'] = list(filtered_cells_np[:, 2])
+    filtered_cells_df = pd.DataFrame(columns=['axis-0', 'axis-1', 'axis-2'])
+    if filtered_cells_np.shape[0] > 0:
+        filtered_cells_df['axis-0'] = list(filtered_cells_np[:, 0])
+        filtered_cells_df['axis-1'] = list(filtered_cells_np[:, 1])
+        filtered_cells_df['axis-2'] = list(filtered_cells_np[:, 2])
     print("Saving coords to csv")
     filtered_cells_df.to_csv(os.path.join(dbscan_folder, f"filtered_chunk_{str(number).zfill(5)}.csv"))
     return filtered_cells_df, filtered_cells_np
 
 
-def remove_background(chunk_file, nuclei_chunk_shape):
+def remove_background(number, nuclei_chunk_shape):
     """
     Multiply nuclei segmentation mask for a specific chunk by its foreground/background mask.
     """
-    fg_mask_folder = os.path.join(str(Path(spectral_info_folder).parent.parent), 'scale_x', 'mask_resized')
+    fg_mask_folder = os.path.join(OUTPUT_DIR, 'scale_x', 'mask_resized')
     fg_mask_stack = tifffile.imread(os.path.join(fg_mask_folder, f"chunk_{str(number).zfill(5)}.tif"))
     fg_mask_stack = resize(fg_mask_stack, nuclei_chunk_shape).astype(np.uint8)
-    nuclei_mask_path = os.path.join(os.path.dirname(chunk_file), f"mask_{os.path.basename(chunk_file)}")
+    nuclei_mask_path = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'detection_masks', f"mask_chunk_{str(number).zfill(5)}.tif")
     nuclei_mask = tifffile.imread(nuclei_mask_path)
     nuclei_mask *= fg_mask_stack
     tifffile.imwrite(nuclei_mask_path, nuclei_mask)
@@ -397,6 +327,7 @@ def extract_box_intensities(points, nuclei_box_size):
 
 
 def get_props(mask, image):
+    print("===============mask image shape", mask.shape, image.shape)
     # Compute the connected components of the binary mask
     labels = measure.label(mask)
 
@@ -462,26 +393,33 @@ def get_intensity(image_np, coords_list):
     return average_intensity
 
 
-def extract_volume_intensities():
+def extract_volume_intensities(nuclei_chunk_shape, number):
     """
     Extract average intensities based on nuclei segmentation mask.
 
     Assuming that resolutions are the same for nuclei and color channels
     """
     # find mask by chunk number
-    NUCLEI_MASK_PATH = os.path.join(os.path.dirname(chunk_file), f"mask_{os.path.basename(chunk_file)}")
+    NUCLEI_MASK_PATH = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "detection_masks", f"mask_chunk_{str(number).zfill(5)}.tif")
     # rescale points to ome-zarr data space
 
     nuclei_masks_np = tifffile.imread(NUCLEI_MASK_PATH)  # mask is in the isotropic space
+    print("--------------------nuclei_masks_np", nuclei_masks_np.shape)
+    print("--------------------nuclei_chunk_shape", nuclei_chunk_shape)
     # ch1_np = zarray[0, 0, ind[0], ind[1], ind[2]]
-    ch1_np = tifffile.imread(chunk_file)  # isotropic
+    yx_ratio = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
+    yz_ratio = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
+
+    # target_shape = (int(round(nuclei_chunk_shape[0] * yz_ratio)), nuclei_chunk_shape[1], int(round(nuclei_chunk_shape[2] * yx_ratio)))
+    # print("target_shape", target_shape)
+    ch1_np = (resize(dask_zarray[0, 0, ind[0], ind[1], ind[2]], nuclei_masks_np.shape) * 65535).astype('uint16')
 
     # !!! Assuming that resolutions are the same for nuclei and colors
     # rescaling color data to isotropic space
-    ch2_np = (resize(color_info_zarray[0, 0, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint16')
-    ch3_np = (resize(color_info_zarray[0, 1, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint16')
-    ch4_np = (resize(color_info_zarray[0, 2, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint16')
-    ch5_np = (resize(color_info_zarray[0, 3, ind[0], ind[1], ind[2]], ch1_np.shape) * 65535).astype('uint16')
+    ch2_np = (resize(color_info_zarray[0, 0, ind[0], ind[1], ind[2]], nuclei_masks_np.shape) * 65535).astype('uint16')
+    ch3_np = (resize(color_info_zarray[0, 1, ind[0], ind[1], ind[2]], nuclei_masks_np.shape) * 65535).astype('uint16')
+    ch4_np = (resize(color_info_zarray[0, 2, ind[0], ind[1], ind[2]], nuclei_masks_np.shape) * 65535).astype('uint16')
+    ch5_np = (resize(color_info_zarray[0, 3, ind[0], ind[1], ind[2]], nuclei_masks_np.shape) * 65535).astype('uint16')
 
     # Construct the centroid dataframe from ch1
     nuclei_df = get_props(nuclei_masks_np, ch1_np)
@@ -539,38 +477,41 @@ def extract_volume_intensities():
     return spectral_info_df
 
 
-def process_chunk(chunk_file, number):
+def process_chunk(number):
     print(f"=========== Processing chunk {number} ===========")
     nuclei_chunk = zarray[0, 0, ind[0], ind[1], ind[2]]
     nuclei_chunk_shape = [
         int(round(nuclei_chunk.shape[0] * zy_factor)), nuclei_chunk.shape[1], int(round(nuclei_chunk.shape[2] * xy_factor))
     ]  # ONLY for removing bg
-    nonzero = remove_background(chunk_file, nuclei_chunk_shape)
+    nonzero = remove_background(number, nuclei_chunk_shape)
     if nonzero:
         print("Extracting intensities")
-        spectral_df = extract_volume_intensities()
+        spectral_df = extract_volume_intensities(nuclei_chunk_shape, number)
     else:
         print("This chunk is background only. Creating empty dataframe")
         spectral_df = pd.DataFrame(columns=column_names)
     spectral_df.to_csv(os.path.join(spectral_info_folder, f"spectral_chunk_{str(number).zfill(5)}.csv"))
 
 
-chunk_file = sys.argv[1]
-NUCLEI_DIR = sys.argv[2]
+print("------------- EXTRACTING SPECTRAL INFO ------------")
+chunk_number = sys.argv[1]
 
-chunks_folder = str(Path(chunk_file).parent)
-spectral_info_folder = os.path.join(str(Path(chunks_folder).parent), "spectral_info")
+spectral_info_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "spectral_info")
 try:
     os.makedirs(spectral_info_folder)
 except FileExistsError:
     pass
-dbscan_folder = os.path.join(str(Path(chunks_folder).parent), "dbscan")  # for background filtered csv files
-if not os.path.exists(dbscan_folder):
-     os.makedirs(dbscan_folder)
+
+dbscan_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "dbscan")  # for background filtered csv files TODO
+
+try:
+    os.makedirs(dbscan_folder)
+except FileExistsError:
+    pass
+
 xy_factor = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
 zy_factor = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
-number = int(re.findall(r"\d+", os.path.basename(chunk_file))[-1])
-location = os.path.join(NUCLEI_DIR, 'scale0')
+location = os.path.join(NUCLEI_DIR, f'scale{SCALE}')
 store = H5_Nested_Store(location)
 zarray = zarr.open(store)
 dask_zarray = da.array(zarray)
@@ -583,10 +524,9 @@ origin_coords = get_origin_coords(3, patchify_chunks_shape, CHUNK_SIZE)
 chunk_indices = get_chunk_indices(origin_coords, CHUNK_SIZE)
 lazy_data = dask_zarray[0, 1:, :, :, :]
 nuclei_box_size = np.round(CUBE_SIZE / np.array(NUCLEI_RESOLUTION)).astype(int)  # 10 um box
-ind = chunk_indices[number]
+ind = chunk_indices[int(chunk_number)]
 
-color_info_location = os.path.join(COLORS_DIR, 'scale0')
-print(color_info_location)
+color_info_location = os.path.join(COLORS_DIR, f'scale{SCALE}')
 color_info_store = H5_Nested_Store(color_info_location)
 color_info_zarray = zarr.open(color_info_store)
 print(color_info_zarray)
@@ -604,4 +544,4 @@ column_names = ['label', 'axis-0', 'axis-1', 'axis-2', 'coords',
                 'ch5_l1', 'ch5_l2', 'ch5_l3', 'ch5_l4',
                 ]
 
-process_chunk(chunk_file, number)
+process_chunk(int(chunk_number))
