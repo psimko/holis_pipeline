@@ -331,14 +331,15 @@ def main():
 
     nuclei_channel = 0
 
-    # extract low-resolution masks for foreground and bright spots
-    if not os.path.exists(os.path.join(OUTPUT_DIR, 'scale_x')):
-        get_chunks_with_background()
-        get_chunks_with_bright_signal()
-
     output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')
     if not os.path.exists(output_folder_scale):
         os.makedirs(output_folder_scale)
+
+    # extract low-resolution masks for foreground and bright spots
+    if not os.path.exists(os.path.join(output_folder_scale, "zero_chunks.npy")):
+        get_chunks_with_background()
+    if not os.path.exists(os.path.join(output_folder_scale, "bright_chunks.npy")):
+        get_chunks_with_bright_signal()
 
     # read the nuclei channel (not into memory)
     location = os.path.join(NUCLEI_DIR, f'scale{SCALE}')
