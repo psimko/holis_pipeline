@@ -52,7 +52,7 @@ mkdir -p $OUTPUT_DIR/scale_$SCALE/dbscan
 
 # --------- start pipeline ---------
 
-module load miniconda3
+module load anaconda3
 conda activate $LNODE_ENV_NAME
 python calculate_chunking.py
 
@@ -85,7 +85,8 @@ do
       echo "module load miniconda3" >> $TASK_FILE
       echo "source activate $GPU_ENV_NAME" >> $TASK_FILE
       echo "python predict_dynamicThreshold_fast.py $MODEL_PATH $CHUNK_NUMBER" >> $TASK_FILE
-      sbatch -p gpu --gres=gpu:1 --mem=64Gb -n8 $TASK_FILE
+      #sbatch -p gpu --gres=gpu:1 --mem=64Gb -n8 $TASK_FILE
+      sbatch -p GPU -N 1 --gpus=v100-32:16 -t 1:00:00 $TASK_FILE
     fi
   fi
 done
@@ -129,7 +130,8 @@ do
             echo "module load miniconda3" >> $TASK_FILE
             echo "source activate $LNODE_ENV_NAME" >> $TASK_FILE
             echo "python holis_get_chunk_spectral_info_slab_mouse.py $number $NUCLEI_DIR" >> $TASK_FILE
-            sbatch -p compute --mem=128Gb -n4 $TASK_FILE
+            #sbatch -p compute --mem=128Gb -n4 $TASK_FILE
+            sbatch -p EM -t 1:00:00 --ntasks-per-node=96 $TASK_FILE
           fi
         fi
         sent_spectral_info_jobs+=($number)  # whether output file exists or not
