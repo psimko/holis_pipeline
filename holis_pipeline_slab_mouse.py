@@ -1,21 +1,37 @@
 """
-Pipeline for the combinatorial mouse slab.
+Pipeline for the human hemibrain.
 
-Uses Pytorch UNet with a model trained on mouse data.
+Uses Pytorch UNet with a model trained on human data.
+Takes in one spool file for nuclei and corresponding spool file for colors.
+Outputs detected nuclei and extracted spectral information.
 
-1) napari_apoc segmentation
-2) Compute bg chunks, save their numbers
-3) compute chunks with bright spots, save their numbers
-4) run pytorch unet on all foreground chunks
-5) get spectral information on all foreground chunks
-6) save giant dataframe with coordinates + intensities at different colors
+inputs:
+- 1 hicam (.fli) file (nuclei)
+- 1 hicam (.fli) file (colors)
 
+1) read fli files to zarr (nuclei, colors)
+2) subtract background (nuclei, colors)
+3) split color channels (colors)
+4) do laser correction (nuclei, colors)
+5) chunk (nuclei)
+6) run pytorch unet on all chunks
+7) fix chunking artifacts
+8) unchunk (nuclei, colors)
+9) save coordinates (nuclei)
+8) color_registration (colors)
+9) get spectral information on all chunks (nuclei, colors)
+
+outputs:
+- 1 combined mask of nuclei
+- 1 csv file with coordinates
+- 1 csv file with spectral information
 """
 
 import logging
 import os
 import re
 import subprocess
+import sys
 import time
 from datetime import datetime
 from glob import glob
@@ -30,9 +46,25 @@ from skimage.transform import resize
 from stack_to_multiscale_ngff.archived_nested_store import Archived_Nested_Store
 from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 
-from utils.create_masks import get_chunks_with_background, get_chunks_with_bright_signal
-from utils.settings import *
+# from utils.create_masks import get_chunks_with_background, get_chunks_with_bright_signal
+# from utils.settings import *
+from holis_pipeline import settings
+from holis_pipeline.read_data import read_fli_as_zarr
+from holis_pipeline.detect_nuclei import detect_cells_deepblink_slurm
+from holis_pipeline.utils.create_masks import get_chunks_with_bright_signal, get_chunks_with_background
+from holis_pipeline.preprocess import preprocess_nuclei, preprocess_colors
+from holis_pipeline.utils.create_folders import create_folders
+from holis_pipeline.unchunk_data import combine_masks, remove_chunking_artifacts, extract_coords
+from holis_pipeline.extract_spectral_info import get_spectral_info
 
+"""
+TODO:
+command-line arguments - Inputs (colors, nuclei) and output
+"""
+
+NUCLEI_FLI = sys.argv[1]
+COLORS_FLI = sys.argv[2]
+OUTPUT_DIR = sys.argv[3]
 
 work_dir = os.getcwd()
 print("Working directory: ", work_dir)
@@ -53,335 +85,50 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def write_detection_task_for_slurm(chunk_number, output_path):
-    with open(output_path, 'w') as f:
-        f.write('#!/bin/bash\n')
-        f.write('module load miniconda3\n')
-        f.write(f'source activate {GPU_ENV_NAME}')
-        f.write('\n')
-        f.write(f'python {work_dir}/predict_dynamicThreshold_fast.py ')  # TODO
-        f.write(MODEL_PATH)
-        f.write(' ')
-        f.write(str(chunk_number))
-        f.write('\n')
-
-
-def submit_slurm_task_gpu(path_to_task):
-    command = ['sbatch', '-p', 'gpu', '--gres=gpu:1', '--mem=64Gb', '-n8', path_to_task]
-    subprocess.run(command)
-
-
-def detect_cells_deepblink_slurm(chunk_numbers, jobs_folder):
-    for chunk_number in chunk_numbers:
-        detection_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'detection')
-        if not os.path.exists(detection_folder):
-            os.makedirs(detection_folder)
-        detections_file_name = os.path.join(detection_folder, f"napari_chunk_{str(chunk_number).zfill(5)}.csv")
-        if os.path.exists(detections_file_name):
-            print(f"Skipping chunk {chunk_number}")
-            continue
-        print(f"Submitting gpu task for chunk {chunk_number}")
-        task_path = os.path.join(jobs_folder, f"detect_chunk_{str(chunk_number).zfill(5)}.sh")
-        write_detection_task_for_slurm(chunk_number, task_path)
-        submit_slurm_task_gpu(task_path)
-
-
-def get_origin_coords(ndim, patchify_chunks_shape, chunk_size):
-    """
-    Get coordinates of each chunk origin.
-    TODO: only 3D now, make compatible with ND
-    """
-    coords_shape = list(patchify_chunks_shape[:ndim]) + [ndim]
-    coords = np.empty(coords_shape, dtype=np.uint16)
-    print(" coords shape", coords.shape)
-    for z in range(coords.shape[0]):
-        for y in range(coords.shape[1]):
-            for x in range(coords.shape[2]):
-                coords[z, y, x, :] = np.array((
-                    z * chunk_size[0],
-                    y * chunk_size[1],
-                    x * chunk_size[2]
-                ))
-    coords = np.reshape(coords, (np.prod(coords.shape[:ndim]), ndim))
-    print("final coords shape", coords.shape)
-    return coords
-
-
-def get_chunk_indices(origin_coords, chunk_size):
-    indices = []
-    for origin in list(origin_coords):
-        indices.append([
-            slice(origin[0], origin[0] + chunk_size[0], 1),
-            slice(origin[1], origin[1] + chunk_size[1], 1),
-            slice(origin[2], origin[2] + chunk_size[2], 1)
-        ])
-    return indices
-
-
-def dask_chunks_to_tiffs_resize(lazy_tiff_stack, chunk_indices, output_folder, yx_ratio, missing_chunks):
-
-    def read_chunk(ind):
-        print("Reading chunk", ind)
-        return lazy_tiff_stack[tuple(ind)]
-
-    def resize_chunk(chunk):
-        print("Resizing chunk")
-        return (resize(chunk, (chunk.shape[0], chunk.shape[1], int(round(chunk.shape[2]*yx_ratio)))) * 65535).astype("uint16")
-
-    def save_chunk(i, img):
-        tifffile.imwrite(os.path.join(output_folder, f"chunk_{str(i).zfill(5)}.tif"), img)
-        return True
-
-    missing_chunk_indices = [chunk_indices[x] for x in missing_chunks]
-
-    chunks = [dask.delayed(read_chunk)(i) for n, i in zip(missing_chunks, missing_chunk_indices)]
-    resized = [dask.delayed(resize_chunk)(i) for i in chunks]
-    saved = [dask.delayed(save_chunk)(i, img) for i, img in zip(missing_chunks, resized)]
-    saved = dask.compute(saved)
-
-
-def convert_to_napari_format(chunks_folder):
-    """
-    Change columns in csv file to make it readable with napari.
-
-    :param chunks_folder:
-    :return:
-    """
-    csv_files = sorted(glob(os.path.join(chunks_folder, '*.csv')))
-    csv_files = [
-        f for f in csv_files if (
-        not os.path.basename(f).startswith('napari') and
-        not os.path.exists(os.path.join(os.path.dirname(f), f"napari_{os.path.basename(f)}"))
-    )]
-    print("CSV files to convert:", len(csv_files))
-
-    def convert(csv_file):
-        print("Converting", csv_file)
-        napari_csv_file_path = os.path.join(os.path.dirname(csv_file), f"napari_{os.path.basename(csv_file)}")
-        try:
-            df = pd.read_csv(csv_file)
-        except pd.errors.EmptyDataError as e:
-            print("Warning: ", e)
-            return
-        df2 = pd.DataFrame()
-        df2['index'] = list(range(df.shape[0]))  # TODO
-        try:
-            zvals = df['z'].tolist()
-            yvals = df['y [px]'].tolist()
-            xvals = df['x [px]'].tolist()
-        except KeyError as e:
-            print(e)
-            return
-
-        df2['axis-0'] = zvals
-        df2['axis-1'] = xvals
-        df2['axis-2'] = yvals
-        df2.to_csv(napari_csv_file_path)
-
-    converted = [dask.delayed(convert)(f) for f in csv_files]
-    converted = dask.compute(converted)
-
-
-def merge_df_fix_wrong_scaling_no_bg(chunks_folder, origin_coords, xy_factor):
-    df_column_names = ['index', 'axis-0', 'axis-1', 'axis-2']  # TODO: ndim
-    df = pd.DataFrame(columns=df_column_names)
-    csv_files = sorted(glob(os.path.join(chunks_folder, 'napari*.csv')))
-    bg_chunks = set(np.load(os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'zero_chunks.npy')))
-    csv_files = [x for x in csv_files if int(re.findall(r"\d+", os.path.basename(x))[-1]) not in bg_chunks]
-    print("CSV files", len(csv_files))
-
-    def read_df(chunk_file):
-        print("reading", chunk_file)
-        return pd.read_csv(chunk_file)
-
-    def process_df(chunk_file, chunk_df):
-        current_chunk = int(re.findall(r"\d+", os.path.basename(chunk_file))[-1])
-        print("processing", current_chunk)
-        chunk_df_corrected = pd.DataFrame()
-        z_values = chunk_df[['axis-0']].to_numpy()
-        y_values = chunk_df[['axis-1']].to_numpy()
-        x_values = chunk_df[['axis-2']].to_numpy()
-        x_values = x_values / xy_factor
-        z_values += origin_coords[current_chunk, 0]
-        y_values += origin_coords[current_chunk, 1]
-        x_values += origin_coords[current_chunk, 2]
-        chunk_df_corrected['index'] = list(range(chunk_df.shape[0]))
-        chunk_df_corrected['axis-0'] = z_values
-        chunk_df_corrected['axis-1'] = y_values
-        chunk_df_corrected['axis-2'] = x_values
-        return chunk_df_corrected
-
-    dfs = [dask.delayed(read_df)(f) for f in csv_files]
-    processed = [dask.delayed(process_df)(f, d_f) for f, d_f in zip(csv_files, dfs)]
-    processed = dask.compute(processed)
-    df = pd.concat(*processed)
-    print("Saving df")
-    df['index'] = list(range(df.shape[0]))
-    return df
-
-
-def submit_slurm_task_compute(task_path):
-    command = ['sbatch', '-p', 'compute', '--mem=128Gb', '-n4', task_path]
-    subprocess.run(command)
-
-
-def write_spectral_extraction_script_for_slurm(chunk_number, task_path):
-    with open(task_path, 'w') as f:
-        f.write('#!/bin/bash\n')
-        f.write('module load miniconda3\n')
-        f.write(f'source activate {LNODE_ENV_NAME}')
-        f.write('\n')
-        f.write(f'python {work_dir}/holis_get_chunk_spectral_info_slab_mouse.py ')
-        f.write(str(chunk_number))
-        f.write(' ')
-        f.write(NUCLEI_DIR)
-        f.write('\n')
-
-
-def get_spectral_info_slurm(chunk_numbers, jobs_folder, spectral_info_folder):
-    # exclude already saved chunks
-    # write bash scripts
-    # submit to compute partition
-    for chunk_number in chunk_numbers:
-        if os.path.exists(os.path.join(spectral_info_folder, f"spectral_chunk_{str(chunk_number).zfill(5)}.csv")):
-            print(f"Skipping chunk {chunk_number}")
-            continue
-        task_path = os.path.join(jobs_folder, f"get_color_info_chunk_{str(chunk_number).zfill(5)}.sh")
-        write_spectral_extraction_script_for_slurm(chunk_number, task_path)
-        submit_slurm_task_compute(task_path)
-
-
-def merge_spectral_info_df(origin_coords, bg_chunks):
-    spectral_info_folder = os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "spectral_info")
-    # get all csv in spectral info folder, check their number
-    dfs = sorted(glob(os.path.join(spectral_info_folder, "spectral*.csv")))
-    print("total dfs", len(dfs))
-    # check they do not belong to bg
-    dfs = [x for x in dfs if int(re.findall(r"\d+", os.path.basename(x))[-1]) not in bg_chunks]
-    print("Dfs to merge", len(dfs))
-    # read them (without dask)
-    print("reading")
-    to_merge = []
-    labels_max = 0
-    for df_file in dfs:
-        current_chunk = int(re.findall(r"\d+", os.path.basename(df_file))[-1])
-        print("processing", current_chunk)
-        df = pd.read_csv(df_file)
-        df['label'] += labels_max
-        labels_max = df['label'].max()
-        to_merge.append(df)
-
-    print("done reading. Concatenating")
-    # concatenate them (without rescaling)
-    df = pd.concat(to_merge, ignore_index=True)
-    print("Concatenated. Saving")
-    # save new df
-    df.to_csv(os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "detected_cells_pytorch_unet_bg_removed_px_w_color_info.csv"))
-    return df
-
-
-def combine_masks():
-    print("Merging masks")
-    chunk_indices = np.load(
-        os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "chunk_indices.npy"),
-        allow_pickle=True
-    )
-    store_nuclei = H5_Nested_Store(f"{NUCLEI_DIR}/scale{SCALE}")
-    zarray_nuclei = zarr.open(store_nuclei)
-    raw_img_shape = zarray_nuclei.shape[-3:]
-    combined_mask = np.zeros(raw_img_shape, dtype=np.uint8)
-    masks = sorted(
-        glob(
-            os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "detection_masks", "mask*.tif")
-        )
-    )
-    for mask in masks:
-        chunk_number = int(re.findall(r"\d+", os.path.basename(mask))[-1])
-        print("Adding chunk", chunk_number)
-        chunk_slices = chunk_indices[chunk_number]
-        edge_flag = False
-        edge_chunk_shape = CHUNK_SIZE
-        if chunk_slices[0].stop >= raw_img_shape[0]:
-            edge_flag = True
-            chunk_slices[0] = slice(chunk_slices[0].start, raw_img_shape[0], chunk_slices[0].step)
-            edge_chunk_shape = (raw_img_shape[0] - chunk_slices[0].start, edge_chunk_shape[1], edge_chunk_shape[2])
-        if chunk_slices[1].stop >= raw_img_shape[1]:
-            edge_flag = True
-            chunk_slices[1] = slice(chunk_slices[1].start, raw_img_shape[1], chunk_slices[1].step)
-            edge_chunk_shape = (edge_chunk_shape[0], raw_img_shape[1] - chunk_slices[1].start, edge_chunk_shape[2])
-        if chunk_slices[2].stop >= raw_img_shape[2]:
-            edge_flag = True
-            chunk_slices[2] = slice(chunk_slices[2].start, raw_img_shape[2], chunk_slices[2].step)
-            edge_chunk_shape = (edge_chunk_shape[0], edge_chunk_shape[1], raw_img_shape[2] - chunk_slices[2].start)
-        mask_resized_space = tifffile.imread(mask)
-        print("Read mask of shape", mask_resized_space.shape)
-        if edge_flag:
-            print("Edge chunk")
-            mask_raw_space = resize(mask_resized_space, edge_chunk_shape) > 0
-        else:
-            mask_raw_space = resize(mask_resized_space, CHUNK_SIZE) > 0
-        combined_mask[chunk_slices[0], chunk_slices[1], chunk_slices[2]] = mask_raw_space
-        tifffile.imwrite(os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "combined_mask_raw_space.tif"), combined_mask)
-
-
 def main():
     # Log the start time
     tstart = datetime.now()
     log.info(f"START TIME: {tstart}")
+    create_folders(OUTPUT_DIR)
 
-    nuclei_channel = 0
+    nuclei_channel = settings.NUCLEI_CHANNEL
 
-    output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')
-    if not os.path.exists(output_folder_scale):
-        os.makedirs(output_folder_scale)
+    # Read data to zarr
+    NUCLEI_DIR = read_fli_as_zarr(NUCLEI_FLI)
+    COLORS_DIR = read_fli_as_zarr(COLORS_FLI)
 
-    # extract low-resolution masks for foreground and bright spots
-    if not os.path.exists(os.path.join(output_folder_scale, "zero_chunks.npy")):
-        get_chunks_with_background()
-    if not os.path.exists(os.path.join(output_folder_scale, "bright_chunks.npy")):
-        get_chunks_with_bright_signal()
+    # Preprocess data
+    NUCLEI_DIR = preprocess_nuclei(NUCLEI_DIR)
+    COLORS_DIR = preprocess_colors(COLORS_DIR)
 
-    # read the nuclei channel (not into memory)
-    location = os.path.join(NUCLEI_DIR, f'scale{SCALE}')
-    store = H5_Nested_Store(location)
-    zarray = zarr.open(store)
-    dask_zarray = da.array(zarray)
-    lazy_tiff_stack = dask_zarray[0, nuclei_channel, :, :, :]
-    log.info(f"3D stack shape {lazy_tiff_stack.shape}")
-    print("3D stack shape", lazy_tiff_stack.shape)
+    output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')  # TODO: do we need scale?
 
-    # create folders for chunks and for SLURM jobs
-    detection_folder = os.path.join(output_folder_scale, 'detection')
-    if not os.path.exists(detection_folder):
-        os.makedirs(detection_folder)
-    jobs_folder = os.path.join(output_folder_scale, 'slurm_jobs')
-    if not os.path.exists(jobs_folder):
-        os.makedirs(jobs_folder)
+    if FOREGROUND_MASKS_ENABLED:
+        # extract low-resolution masks for foreground
+        if not os.path.exists(os.path.join(output_folder_scale, "zero_chunks.npy")):
+            get_chunks_with_background()
+        bg_chunks = set(np.load(os.path.join(output_folder_scale, "zero_chunks.npy")))
+    else:
+        bg_chunks = set()
 
-    # Get coordinates and indices of each chunk
-    ratios = (np.array(lazy_tiff_stack.shape) / np.array(CHUNK_SIZE)).astype('int') + 1
-    patchify_chunks_shape = (*list(ratios), *CHUNK_SIZE)
-    origin_coords = get_origin_coords(3, patchify_chunks_shape, CHUNK_SIZE)
-    chunk_indices = get_chunk_indices(origin_coords, CHUNK_SIZE)
-    np.save(os.path.join(output_folder_scale, "origin_coords.npy"), origin_coords)
-    np.save(os.path.join(output_folder_scale, "chunk_indices.npy"), chunk_indices)
-
-    bg_chunks = set(np.load(os.path.join(output_folder_scale, "zero_chunks.npy")))
-    # bright_chunks = set(np.load(os.path.join(OUTPUT_DIR, "bright_chunks.npy")))
+    if DENSE_REGION_MASK_ENABLED:
+        # extract low-resolution masks for bright spots
+        if not os.path.exists(os.path.join(output_folder_scale, "bright_chunks.npy")):
+            get_chunks_with_bright_signal()
+        bright_chunks = set(np.load(os.path.join(output_folder_scale, "bright_chunks.npy")))
+    else:
+        bright_chunks = set()
 
     # ================= Create nuclei detection jobs =================
 
     # check what chunks got extracted - save this info (compare with fg chunks list)
     # for extracted chunks generate and submit nuclei detection jobs
-    fg_chunks = set([x for x in range(len(chunk_indices)) if x not in bg_chunks])
+    fg_chunks = set([x for x in range(len(chunk_indices)) if x not in bg_chunks and x not in bright_chunks])
     log.info(f"Total foreground chunks: {len(fg_chunks)}")
     detect_cells_deepblink_slurm(list(fg_chunks), jobs_folder)
     log.info("All nuclei detection tasks were submitted")
 
-    # ================= Create spectral extraction jobs =================
-
     # check which csv files have been generated
-    # send these chunks for spectral information
     spectral_info_folder = os.path.join(output_folder_scale, 'spectral_info')
     sent_tasks = set()
     remaining_chunks = fg_chunks.copy()
@@ -391,8 +138,6 @@ def main():
             int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(detection_folder, "*.csv"))
         ])
         chunk_numbers_set = detection_done - sent_tasks
-        # actual submission happens here:
-        get_spectral_info_slurm(list(chunk_numbers_set), jobs_folder, spectral_info_folder)
         sent_tasks.update(chunk_numbers_set)
         remaining_chunks = fg_chunks - sent_tasks
         time.sleep(2)
@@ -400,41 +145,16 @@ def main():
     log.info("All nuclei detection jobs finished")
     tfin_detection = datetime.now()
     log.info(f"Time spent on extraction + nuclei detection: {tfin_detection - tstart}")
-    log.info("All spectral extraction jobs were submitted")
 
-    # check which spectral info files are finished
-    # log time when all are done
-
-    remaining_chunks = fg_chunks.copy()
-    while len(remaining_chunks):
-        print("Chunks remaining to extract spectral info", len(remaining_chunks))
-        print(remaining_chunks)
-        spectral_info_done = set([
-            int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(spectral_info_folder, "*.csv"))
-        ])
-        remaining_chunks = fg_chunks - spectral_info_done
-        time.sleep(2)
-
-    log.info("All spectral extraction jobs finished")
-    tfin_spectral_info = datetime.now()
-    log.info(f"Time spent on extraction + nuclei detection + spectral info: {tfin_spectral_info - tstart}")
-
-
-    # ================= Merge and save the final df =================
+    # ================= Merge masks and df with coordinates =================
 
     log.info("Merging spectral info df")
-    df = merge_spectral_info_df(origin_coords, bg_chunks)
-    # log time when finished
-    tfin_save_df = datetime.now()
-    log.info(f"Time spent on extraction + nuclei detection + spectral info + merging df: {tfin_save_df - tstart}")
-
-    # drop columns with spectral info
-    df = df[['axis-0', 'axis-1', 'axis-2']]
-    # save df with just the coordinates
-    df.to_csv(os.path.join(output_folder_scale, "detected_cells_pytorch_unet_bg_removed_new_px.csv"))
-
-    log.info("Combining masks")
     combine_masks()
+    remove_chunking_artifacts()
+    extract_coords()
+
+    get_spectral_info()
+
     log.info("All Done!")
 
 
