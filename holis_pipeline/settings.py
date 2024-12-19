@@ -1,6 +1,6 @@
-NUCLEI_DIR = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/AI7_EH5f3/omezarr_16bit/nuclei.omehans'  # nuclei
-COLORS_DIR = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/AI7_EH5f3/omezarr_16bit/colors.omehans'
-OUTPUT_DIR = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/AI7_EH5f3/output_bridges2_wholeSlab/'
+# NUCLEI_DIR = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/AI7_EH5f3/omezarr_16bit/nuclei.omehans'  # nuclei
+# COLORS_DIR = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/AI7_EH5f3/omezarr_16bit/colors.omehans'
+# OUTPUT_DIR = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/AI7_EH5f3/output_bridges2_wholeSlab/'
 CHUNK_SIZE = (40, 1700, 1700)
 #CHUNK_SIZE = (20,850,850)
 MODEL_PATH = '/bil/proj/rf1hillman/pynet/segmentation_mouse_pruned_norm_scaled__128_oneVol_v2_w1_b1_e12_from345/model.pth'  # mouse model
@@ -13,3 +13,6 @@ SCALE = 0  # resolution level to use for analysis
 SCALE_USED_FOR_MASKS = 2
 DENSE_REGIONS_MASK = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/AI7_EH5f3/output_bridges2_wholeSlab/bright_mask.tif'
 FOREGROUND_MASK = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/AI7_EH5f3/output_bridges2_wholeSlab/bg_fg_mask.tif'
+NUCLEI_CHANNEL = 0
+FOREGROUND_MASKS_ENABLED = False
+DENSE_REGION_MASK_ENABLED = False
