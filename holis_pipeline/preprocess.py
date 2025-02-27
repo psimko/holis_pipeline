@@ -1,14 +1,34 @@
 from holis_pipeline import settings
 
 
-def subtract_background(input_location, output_location):
+# def subtract_background(input_location, output_location):
+def subtract_background(image_dask_zarray, bg_mask):
+
     """
     input: data .omehans
-           empty frames (.mat) - the same shape as the data
+           empty frames (.mat) - the same shape as the data (1 file per nuclei+colors fli pair)
     output: flattened .omehans - same shape as input
     """
-    empty_frames_location = settings.EMPTY_FRAMES_LOCATION
-    pass
+    # dir_name = '/bil/proj/rf1hillman/2024_07_29_AI7_EH5k_human_finalMarkerCombination_100mm/raw_HiCAMdata/'
+    # bg_info = sio.loadmat(os.path.join(f'{input_location}','wholeScanBG_run001_info.mat'))
+    bg_nuclei_filename = 'wholeScanBG-run001_HiCAM FLUO_1875-ST-272.fli'
+    # bg_colors_filename = 'wholeScanBG-run001_HiCAM FLUO_1875-ST-088.fli'
+    bg_nuclei_path = os.path.join(dir_name, bg_nuclei_filename)
+    # bg_colors_path = os.path.join(dir_name, bg_colors_filename)
+    bg_nuclei = read_data_file(bg_nuclei_path)
+    # bg_colors = read_data_file(bg_colors_path)
+
+    # Generate background masks
+    bg_nuclei_mask = da.mean(da.asarray(bg_nuclei, dtype=np.float32), axis=2) - 2**10
+    # bg_colors_mask = da.mean(da.asarray(bg_colors, dtype=np.float32), axis=2) - 2**10
+
+
+    # empty_frames_location = settings.EMPTY_FRAMES_LOCATION
+
+
+    image_dask_zarray_bgSubtracted = image_dask_zarray - bg_nuclei_mask[:, :, np.newaxis]
+    
+    return image_dask_zarray_bgSubtracted
 
 
 def split_color_channels(input_location, output_location):
