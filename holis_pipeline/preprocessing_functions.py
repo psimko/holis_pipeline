@@ -1,6 +1,10 @@
 #######################################################################################
-#########   Preprocessing functions for hicam (.fli) files - Holis project ############ 
+#########   File load functions for hicam (.fli) files - Holis project ################ 
 #######################################################################################
+
+# (Preprocessing functions are further down)
+
+### MODULES ###
 
 import numpy as np
 from ast import literal_eval
@@ -17,6 +21,8 @@ import dask
 from dask import delayed
 
 #######################################################################################
+
+### HEADER CONTENT ###
 
 header_info = {
     # '{FLIMIMAGE}'
@@ -79,64 +85,11 @@ header_info = {
 
 #######################################################################################
 
-def read_header(file_name):
-    '''
-    Given a file name, read hicam header and extract parameters into a dictionary.  Make an effort to coerce
-    values into appropriate types.
-
-    Return dictionary
-
-    Dictionary includes an extra key 'headerLength'.  All data after this index is image frame data.
-    '''
-    read_n = 0
-    fileinfo = b''
-    with open(file_name, 'rb') as f:
-        while read_n < 100:
-            a = f.read(1000)
-            fileinfo += a
-            if b'{END}' in fileinfo:
-                header_length = fileinfo.index(b'{END}') + 5
-                # location = str(fileinfo).index('{END}')
-                print(f'Found the end of header at location {header_length}')
-
-                # Convert fileinfo to a string and trim b' and remove anything after {END}
-                header_string_end = str(fileinfo).index('{END}') + 5
-                fileinfo = str(fileinfo)[2:header_string_end]
-                break
-            read_n += 1
-        if read_n == 100:
-            raise KeyError('Error while reading HICAM Header, Header Length too long?')
-
-    raw_header_string = fileinfo
-
-    # Edit: change fileinfo to raw header string
-    
-    # Extract header info
-    fileinfo = raw_header_string.split('\\n')     
-    for idx, ii in enumerate(fileinfo): 
-        print(ii)
-
-    for ii in fileinfo:
-        for key in header_info:
-            test = key.lower() + ' = '
-            if ii.lower().startswith(test):
-                header_info[key] = ii[len(test)::]
-
-    # Automatically convert values to appropriate types
-    for key, value in header_info.items():
-        try:
-            header_info[key] = literal_eval(value)
-        except Exception:
-            pass
-    header_info['headerLength'] = header_length
-    print(header_info)
-    return header_info, raw_header_string
-
-#######################################################################################
+### .fli TO .omezarr FUNCTION ###
 
 def send_hicam_to_zarr_par_read_once(hicam_file,zarr_location,compressor_type='zstd', compressor_level=5, shuffle=1, chunk_depth=128, chunk_lat=128, frames_at_once=1024):
     """
-    Function for converting a hicam .fli file into an omezarr file.
+    Function to convert a hicam .fli file into an omezarr file.
 
     Args:
         hicam .fli file
@@ -164,8 +117,6 @@ def send_hicam_to_zarr_par_read_once(hicam_file,zarr_location,compressor_type='z
                 send_hicam_to_zarr_par_read_once(spool_file,zarr_location,compressor_type='zstd', compressor_level=5, shuffle=1, chunk_depth=128, frames_at_once=128)
         run()
     """
-    import dask
-    from dask import delayed
 
     compressor = Blosc(
         cname=compressor_type,
@@ -233,5 +184,216 @@ def send_hicam_to_zarr_par_read_once(hicam_file,zarr_location,compressor_type='z
     # with Client() as client:
     #     print('Computing')
     #     out = client.compute(to_process)
+
+#######################################################################################
+
+### HELPER FUNCTIONS
+
+
+def get_header_size(file_name, header_info=None):
+
+    if header_info is None:
+        header_info, _ = read_header(file_name)
+
+    return header_info['headerLength']
+
+def get_frame_shape(file_name, header_info=None):
+
+    if header_info is None:
+        header_info, _ = read_header(file_name)
+
+    return (header_info['y'], header_info['x'])
+
+
+def get_number_of_frames(file_name, header_info=None):
+
+    if header_info is None:
+        header_info, _ = read_header(file_name)
+
+    pixelInFrame_bit8 = int(header_info['x'] * header_info['y'] / 2 * 3)  # Number of bits in frame
+
+    how_many_frames = header_info['timestamps']
+    if how_many_frames is None:
+        with open(file_name, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            size_of_file = f.tell()
+            header_len = header_info['headerLength']
+            data_size = size_of_file - header_len
+            num_frames_remainder = data_size % pixelInFrame_bit8
+            assert num_frames_remainder == 0, 'The length of the spool file does not fit an integer number of frames'
+            how_many_frames = data_size // pixelInFrame_bit8
+
+    return how_many_frames
+
+def get_hicam_zarr(zarr_location, mode='r'):
+    store = H5_Nested_Store(zarr_location, 'r')
+    array = zarr.open(store,mode)
+    print(array)
+    return array
+
+def read_uint12(data_chunk, coerce_to_uint16_values=True):
+    '''
+    Since numpy does not understand uint12 data, this function takes a raw bytes object and reads the 12bit integer
+    data into a uint16 array.
+
+    Input:
+        data_chunk: Byte string
+        coerce_to_uint16_values (bool): if True outputs an array with values that are scaled to uint16
+
+        In general this should remain True.  Thus, the image is representative of a conversion to UINT16 precision
+        and any conversion to other precision images (ie float for processing) will appropriately represent the
+        original data. *Manual conversion to the original uint12 values can be obtained by division by 16
+
+    Output:
+         uint16 numpy array where each integer corresponds to the uint12 value (default)
+
+    '''
+
+    array = read_uint12_c(data_chunk)
+    if coerce_to_uint16_values:
+        array *= 16
+    return array
+
+def write_part_bytes(zarr_location, bytes_from_file, writedict):
+    array = get_hicam_zarr(zarr_location, mode='a')
+
+    print(f'Forming Array')
+    chunk_shape = (
+        writedict['frames'],
+        array.shape[1],
+        array.shape[2]
+    )
+    output = np.zeros(chunk_shape, 'uint16')
+    for idx in range(writedict['frames']):
+        where_to_start = idx * writedict['pixelInFrame_bit8']
+        data = bytes_from_file[where_to_start:where_to_start + writedict['pixelInFrame_bit8']]
+
+        # Data to uint16 where uint12 values have been scaled to uint16 values
+        # uint16 scaling is important for downstream manipulation as float or for visualization accuracy
+        canvas = read_uint12(data, coerce_to_uint16_values=True)
+        # canvas = read_uint12(data, coerce_to_uint16_values=False)
+
+        output[idx] = canvas.reshape((header_info['y'], header_info['x']))
+
+    start = writedict['group'] * writedict['frames_at_once']
+    stop = start + writedict['frames']
+    array[start:stop] = output
+    del array
+
+#######################################################################################
+
+### READ HEADER FUNCTION ###
+
+def read_header(file_name):
+    '''
+    Given a file name, read hicam header and extract parameters into a dictionary.  Make an effort to coerce
+    values into appropriate types.
+
+    Return dictionary
+
+    Dictionary includes an extra key 'headerLength'.  All data after this index is image frame data.
+    '''
+    read_n = 0
+    fileinfo = b''
+    with open(file_name, 'rb') as f:
+        while read_n < 100:
+            a = f.read(1000)
+            fileinfo += a
+            if b'{END}' in fileinfo:
+                header_length = fileinfo.index(b'{END}') + 5
+                # location = str(fileinfo).index('{END}')
+                print(f'Found the end of header at location {header_length}')
+
+                # Convert fileinfo to a string and trim b' and remove anything after {END}
+                header_string_end = str(fileinfo).index('{END}') + 5
+                fileinfo = str(fileinfo)[2:header_string_end]
+                break
+            read_n += 1
+        if read_n == 100:
+            raise KeyError('Error while reading HICAM Header, Header Length too long?')
+
+    raw_header_string = fileinfo
+
+    # Edit: change fileinfo to raw header string
+    
+    # Extract header info
+    fileinfo = raw_header_string.split('\\n')     
+    for idx, ii in enumerate(fileinfo): 
+        print(ii)
+
+    for ii in fileinfo:
+        for key in header_info:
+            test = key.lower() + ' = '
+            if ii.lower().startswith(test):
+                header_info[key] = ii[len(test)::]
+
+    # Automatically convert values to appropriate types
+    for key, value in header_info.items():
+        try:
+            header_info[key] = literal_eval(value)
+        except Exception:
+            pass
+    header_info['headerLength'] = header_length
+    print(header_info)
+    return header_info, raw_header_string
+
+#######################################################################################
+
+### GENERATE START AND STOP FRAMES ###
+
+def get_start_stop_reads_for_frame_groups(file_name, header_info=None, frames_at_once=1024):
+    '''
+    Given a file name, read hicam header and extract start and stop indexes of groups of frames.
+
+    Return generator of dictionaries
+    '''
+    if header_info is None:
+        header_info, _ = read_header(file_name)
+
+    pixelInFrame_bit8 = int(header_info['x'] * header_info['y'] / 2 * 3)  # Number of bits in frame
+
+    how_many_frames = header_info['timestamps']
+    if how_many_frames is None:
+        with open(file_name, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            size_of_file = f.tell()
+            header_len = header_info['headerLength']
+            data_size = size_of_file - header_len
+            num_frames_remainder = data_size % pixelInFrame_bit8
+            assert num_frames_remainder == 0, 'The length of the spool file does not fit an integer number of frames'
+            how_many_frames = data_size // pixelInFrame_bit8
+            
+    else:
+        data_size = how_many_frames * pixelInFrame_bit8
+        header_len = header_info['headerLength']
+
+    read_len = frames_at_once * pixelInFrame_bit8
+    remaining = data_size
+    start = header_len
+    idx = 0
+    while remaining > 0:
+        if remaining - read_len < 0:
+            stop = start + remaining
+            remaining = 0
+        else:
+            stop = start + read_len
+            remaining -= read_len
+
+        length = stop-start
+        yield {'start':start,
+               'stop':stop,
+               'group':idx,
+               'len':length,
+               'file':file_name,
+               'frames':length//pixelInFrame_bit8,
+               'pixelInFrame_bit8':pixelInFrame_bit8,
+               'last':remaining==0,
+               'frames_at_once':frames_at_once}
+        start = stop
+        idx += 1
+
+#######################################################################################
+
+
 
 
