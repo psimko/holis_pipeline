@@ -339,6 +339,62 @@ def read_header(file_name):
 
 #######################################################################################
 
+def read_data_file(spool_file, header_info=None):
+
+    if header_info is None:
+        header_info, _ = read_header(spool_file)
+
+    ################################################################
+    ## READ HICAM DATA IN ALL AT ONCE then convert to numpy z-stack
+    ################################################################
+
+    pixelInFrame_bit8 = int(int(header_info['x']) * int(header_info['y']) / 2 * 3)  # Number of bits in frame
+
+    how_many_frames = header_info['timestamps']
+    if how_many_frames is None:
+        with open(spool_file, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            size_of_file = f.tell()
+            print(f'{size_of_file=}')
+            header_len = header_info['headerLength']
+            print(f'{header_len=}')
+            data_size = size_of_file - header_len
+            print(f'{data_size=}')
+            num_frames_remainder = data_size%pixelInFrame_bit8
+            print(f'{num_frames_remainder=}')
+            how_many_frames = int(data_size//pixelInFrame_bit8)
+            print(f'{how_many_frames=}')
+
+    chunk_shape = (int(how_many_frames), int(header_info['y']), int(header_info['x']))
+
+    output = np.zeros(chunk_shape, 'uint16')
+
+    #make tuple of slices to extract
+
+    with open(spool_file, 'rb') as f:
+        size_of_file = f.tell()
+        print(f'{size_of_file=}')
+        print(f'Reading {how_many_frames} frames')
+        f.seek(header_info['headerLength'])
+        multi_frame = f.read(int(how_many_frames) * int(pixelInFrame_bit8))
+
+    print(f'Forming Array')
+    for idx in range(int(how_many_frames)):
+        print(f'Converting {idx} of {how_many_frames}')
+        where_to_start = idx * pixelInFrame_bit8
+        data = multi_frame[where_to_start:where_to_start + pixelInFrame_bit8]
+
+        # Data to uint16 where uint12 values have been scaled to uint16 values
+        # uint16 scaling is important for downstream manipulation as float or for visualization accuracy
+        canvas = read_uint12_c(data) # removed 'coerce_to_uint16_values=True' parameter
+        # canvas = read_uint12(data, coerce_to_uint16_values=False)
+
+        output[idx] = canvas.reshape((int(header_info['y']), int(header_info['x'])))
+
+    return output
+
+#######################################################################################
+
 ### GENERATE START AND STOP FRAMES ###
 
 def get_start_stop_reads_for_frame_groups(file_name, header_info=None, frames_at_once=1024):
@@ -393,6 +449,7 @@ def get_start_stop_reads_for_frame_groups(file_name, header_info=None, frames_at
         idx += 1
 
 #######################################################################################
+
 
 
 
