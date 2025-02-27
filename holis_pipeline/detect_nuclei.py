@@ -1,4 +1,12 @@
+import os
+import subprocess
+from pathlib import Path
+
+from holis_pipeline.settings import *
+
+
 def write_detection_task_for_slurm(chunk_number, output_path):
+    work_dir = str(Path(os.path.dirname(__file__)).parent)
     with open(output_path, 'w') as f:
         f.write('#!/bin/bash\n')
         f.write('module load miniconda3\n')

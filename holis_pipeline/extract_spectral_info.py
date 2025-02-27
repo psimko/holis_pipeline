@@ -29,22 +29,23 @@ def get_spectral_info_slurm(chunk_numbers, jobs_folder, spectral_info_folder):
         submit_slurm_task_compute(task_path)
 
 
-def get_spectral_info():
+def get_spectral_info(coords_file):
+    pass
     # ================= Create spectral extraction jobs =================
 
     # check which csv files have been generated
     # send these chunks for spectral information
-    spectral_info_folder = os.path.join(output_folder_scale, 'spectral_info')
-    sent_tasks = set()
-    remaining_chunks = fg_chunks.copy()
-    while len(remaining_chunks):
-        print("Chunks remaining to do nuclei detection", len(remaining_chunks))
-        detection_done = set([
-            int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(detection_folder, "*.csv"))
-        ])
-        chunk_numbers_set = detection_done - sent_tasks
-        # actual submission happens here:
-        get_spectral_info_slurm(list(chunk_numbers_set), jobs_folder, spectral_info_folder)
-        sent_tasks.update(chunk_numbers_set)
-        remaining_chunks = fg_chunks - sent_tasks
-        time.sleep(2)
+    # spectral_info_folder = os.path.join(output_folder_scale, 'spectral_info')
+    # sent_tasks = set()
+    # remaining_chunks = fg_chunks.copy()
+    # while len(remaining_chunks):
+    #     print("Chunks remaining to do nuclei detection", len(remaining_chunks))
+    #     detection_done = set([
+    #         int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(detection_folder, "*.csv"))
+    #     ])
+    #     chunk_numbers_set = detection_done - sent_tasks
+    #     # actual submission happens here:
+    #     get_spectral_info_slurm(list(chunk_numbers_set), jobs_folder, spectral_info_folder)
+    #     sent_tasks.update(chunk_numbers_set)
+    #     remaining_chunks = fg_chunks - sent_tasks
+    #     time.sleep(2)

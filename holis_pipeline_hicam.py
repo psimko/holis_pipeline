@@ -1,13 +1,16 @@
 """
 Pipeline for the human hemibrain.
 
-Uses Pytorch UNet with a model trained on human data.
+This is a CPU task for SLURM. It spins off several GPU tasks.
+
+GPU tasks run Pytorch UNet with a model trained on human data.
+
 Takes in one spool file for nuclei and corresponding spool file for colors.
 Outputs detected nuclei and extracted spectral information.
 
 inputs:
-- 1 hicam (.fli) file (nuclei)
-- 1 hicam (.fli) file (colors)
+- 1 hicam (.fli) file (nuclei - camera the suffix is 272)
+- 1 hicam (.fli) file (colors - camera the suffix is 088)
 
 1) read fli files to zarr (nuclei, colors)
 2) subtract background (nuclei, colors)
@@ -18,8 +21,9 @@ inputs:
 7) fix chunking artifacts
 8) unchunk (nuclei, colors)
 9) save coordinates (nuclei)
-8) color_registration (colors)
-9) get spectral information on all chunks (nuclei, colors)
+10) color_registration (colors)
+11) get spectral information on all chunks (nuclei, colors)
+12) delete intermediate files (zarr, preprocessed zarr, any chunks)
 
 outputs:
 - 1 combined mask of nuclei
@@ -49,6 +53,7 @@ from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 # from utils.create_masks import get_chunks_with_background, get_chunks_with_bright_signal
 # from utils.settings import *
 from holis_pipeline import settings
+from holis_pipeline.chunk_data import chunk_data
 from holis_pipeline.read_data import read_fli_as_zarr
 from holis_pipeline.detect_nuclei import detect_cells_deepblink_slurm
 from holis_pipeline.utils.create_masks import get_chunks_with_bright_signal, get_chunks_with_background
@@ -94,14 +99,16 @@ def main():
     nuclei_channel = settings.NUCLEI_CHANNEL
 
     # Read data to zarr
-    NUCLEI_DIR = read_fli_as_zarr(NUCLEI_FLI)
-    COLORS_DIR = read_fli_as_zarr(COLORS_FLI)
+    NUCLEI_DIR = read_fli_as_zarr(NUCLEI_FLI, os.path.join(OUTPUT_DIR, 'nuclei'))
+    COLORS_DIR = read_fli_as_zarr(COLORS_FLI, os.path.join(OUTPUT_DIR, 'colors'))
 
     # Preprocess data
     NUCLEI_DIR = preprocess_nuclei(NUCLEI_DIR)
-    COLORS_DIR = preprocess_colors(COLORS_DIR)
+    COLORS_DIR = preprocess_colors(COLORS_DIR)  # TODO separate task
 
-    output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')  # TODO: do we need scale?
+    output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')  # TODO: do we need scale? Will it always be full resolution?
+
+    chunk_indices = chunk_data(NUCLEI_DIR)
 
     if FOREGROUND_MASKS_ENABLED:
         # extract low-resolution masks for foreground
@@ -148,13 +155,13 @@ def main():
 
     # ================= Merge masks and df with coordinates =================
 
-    log.info("Merging spectral info df")
-    combine_masks()
-    remove_chunking_artifacts()
-    extract_coords()
+    combined_mask_location = combine_masks(NUCLEI_DIR)
+    no_artifact_mask_location = remove_chunking_artifacts(combined_mask_location)
+    coords_file = extract_coords(no_artifact_mask_location, OUTPUT_DIR)
 
-    get_spectral_info()
-
+    spectral_info_df = get_spectral_info(coords_file)  # single task? No chunks?
+    # TODO: should spectral info be extracted after all neighbor slabs are finished?
+    print("Spectral information saved at", spectral_info_df)
     log.info("All Done!")
 
 

@@ -1,3 +1,6 @@
+from holis_pipeline.settings import *
+
+
 def merge_df_fix_wrong_scaling_no_bg(chunks_folder, origin_coords, xy_factor):
     df_column_names = ['index', 'axis-0', 'axis-1', 'axis-2']  # TODO: ndim
     df = pd.DataFrame(columns=df_column_names)
@@ -36,44 +39,42 @@ def merge_df_fix_wrong_scaling_no_bg(chunks_folder, origin_coords, xy_factor):
     return df
 
 
+# def merge_spectral_info_df(origin_coords, bg_chunks):
+#     spectral_info_folder = os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "spectral_info")
+#     # get all csv in spectral info folder, check their number
+#     dfs = sorted(glob(os.path.join(spectral_info_folder, "spectral*.csv")))
+#     print("total dfs", len(dfs))
+#     # check they do not belong to bg
+#     dfs = [x for x in dfs if int(re.findall(r"\d+", os.path.basename(x))[-1]) not in bg_chunks]
+#     print("Dfs to merge", len(dfs))
+#     # read them (without dask)
+#     print("reading")
+#     to_merge = []
+#     labels_max = 0
+#     for df_file in dfs:
+#         current_chunk = int(re.findall(r"\d+", os.path.basename(df_file))[-1])
+#         print("processing", current_chunk)
+#         df = pd.read_csv(df_file)
+#         df['label'] += labels_max
+#         labels_max = df['label'].max()
+#         to_merge.append(df)
+#
+#     print("done reading. Concatenating")
+#     # concatenate them (without rescaling)
+#     df = pd.concat(to_merge, ignore_index=True)
+#     print("Concatenated. Saving")
+#     # save new df
+#     df.to_csv(os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "detected_cells_pytorch_unet_bg_removed_px_w_color_info.csv"))
+#     return df
 
 
-def merge_spectral_info_df(origin_coords, bg_chunks):
-    spectral_info_folder = os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "spectral_info")
-    # get all csv in spectral info folder, check their number
-    dfs = sorted(glob(os.path.join(spectral_info_folder, "spectral*.csv")))
-    print("total dfs", len(dfs))
-    # check they do not belong to bg
-    dfs = [x for x in dfs if int(re.findall(r"\d+", os.path.basename(x))[-1]) not in bg_chunks]
-    print("Dfs to merge", len(dfs))
-    # read them (without dask)
-    print("reading")
-    to_merge = []
-    labels_max = 0
-    for df_file in dfs:
-        current_chunk = int(re.findall(r"\d+", os.path.basename(df_file))[-1])
-        print("processing", current_chunk)
-        df = pd.read_csv(df_file)
-        df['label'] += labels_max
-        labels_max = df['label'].max()
-        to_merge.append(df)
-
-    print("done reading. Concatenating")
-    # concatenate them (without rescaling)
-    df = pd.concat(to_merge, ignore_index=True)
-    print("Concatenated. Saving")
-    # save new df
-    df.to_csv(os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "detected_cells_pytorch_unet_bg_removed_px_w_color_info.csv"))
-    return df
-
-
-def combine_masks():
+def combine_masks(nuclei_dir):
     print("Merging masks")
     chunk_indices = np.load(
         os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "chunk_indices.npy"),
         allow_pickle=True
     )
-    store_nuclei = H5_Nested_Store(f"{NUCLEI_DIR}/scale{SCALE}")
+    store_nuclei = H5_Nested_Store(f"{nuclei_dir}/scale{SCALE}")
     zarray_nuclei = zarr.open(store_nuclei)
     raw_img_shape = zarray_nuclei.shape[-3:]
     combined_mask = np.zeros(raw_img_shape, dtype=np.uint8)
@@ -108,12 +109,25 @@ def combine_masks():
         else:
             mask_raw_space = resize(mask_resized_space, CHUNK_SIZE) > 0
         combined_mask[chunk_slices[0], chunk_slices[1], chunk_slices[2]] = mask_raw_space
-        tifffile.imwrite(os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "combined_mask_raw_space.tif"), combined_mask)
+
+    mask_location = os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "combined_mask_raw_space.tif")
+    tifffile.imwrite(mask_location, combined_mask)  # TODO zarr?
+    return mask_location
 
 
-def remove_chunking_artifacts():
-    pass
+def remove_chunking_artifacts(location):
+    # from large slab pipeline
+    no_artifact_location = oas.path.join(os.path.dirname(location), f"{os.path.basename(location)}_artifact_removed")
+    try:
+        os.makedirs(no_artifact_location)
+    except:
+        pass
+    return no_artifact_location
 
 
-def extract_coords():
-    pass
+def extract_coords(mask_location, output_dir):
+    # from current pipeline
+    # using regionprops
+    # TODO: what format do we save it in?
+    coords_file = os.path.join(output_dir, "nuclei_coords.csv")
+    return coords_file

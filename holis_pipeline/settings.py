@@ -10,9 +10,19 @@ CUBE_SIZE = 10  # um to cut around nuclei
 GPU_ENV_NAME = 'pytorch'
 LNODE_ENV_NAME = 'deepblink2'
 SCALE = 0  # resolution level to use for analysis
+NUCLEI_CHANNEL = 0
+
+
+# masks
+FOREGROUND_MASKS_ENABLED = False
+DENSE_REGION_MASK_ENABLED = False
 SCALE_USED_FOR_MASKS = 2
 DENSE_REGIONS_MASK = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/AI7_EH5f3/output_bridges2_wholeSlab/bright_mask.tif'
 FOREGROUND_MASK = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/AI7_EH5f3/output_bridges2_wholeSlab/bg_fg_mask.tif'
-NUCLEI_CHANNEL = 0
-FOREGROUND_MASKS_ENABLED = False
-DENSE_REGION_MASK_ENABLED = False
+
+
+# Pre-processing
+EMPTY_FRAMES_LOCATION = ""  # path on file system
+LASER_PATTERN_MATRIX = ""  # text file location
+ABSORPTION_MATRIX = ""  # text file location
+MIXING_MATRIX = ""  # text file location
