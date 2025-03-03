@@ -1,34 +1,49 @@
+import os
+from glob import glob
+
+import dask.array as da
+import numpy as np
+import tifffile
+
 from holis_pipeline import settings
+from holis_pipeline.preprocessing_functions import read_data_file
+from holis_pipeline.read_data import read_fli_as_zarr
+from holis_pipeline.utils.zarr_related import read_omehans
 
 
 # def subtract_background(input_location, output_location):
-def subtract_background(image_dask_zarray, bg_mask):
+def subtract_background(input_location, output_location, bg_file_name):
 
     """
     input: data .omehans
            empty frames (.mat) - the same shape as the data (1 file per nuclei+colors fli pair)
     output: flattened .omehans - same shape as input
     """
-    # dir_name = '/bil/proj/rf1hillman/2024_07_29_AI7_EH5k_human_finalMarkerCombination_100mm/raw_HiCAMdata/'
-    # bg_info = sio.loadmat(os.path.join(f'{input_location}','wholeScanBG_run001_info.mat'))
-    bg_nuclei_filename = 'wholeScanBG-run001_HiCAM FLUO_1875-ST-272.fli'
-    # bg_colors_filename = 'wholeScanBG-run001_HiCAM FLUO_1875-ST-088.fli'
-    bg_nuclei_path = os.path.join(dir_name, bg_nuclei_filename)
-    # bg_colors_path = os.path.join(dir_name, bg_colors_filename)
-    bg_nuclei = read_data_file(bg_nuclei_path)
-    # bg_colors = read_data_file(bg_colors_path)
+    print("reading zarr")
+    image_dask_zarray = read_omehans(input_location)
+    image_np_array = image_dask_zarray.compute()
+    print("Reading BG file")
+    BG_FOLDER = read_fli_as_zarr(bg_file_name, os.path.join(os.path.dirname(bg_file_name), os.path.basename(bg_file_name).replace('.fli', '')))
+    bg_dask_zarray = read_omehans(BG_FOLDER)
+    bg_array = bg_dask_zarray.compute()
+    # # Generate background masks
+    # bg_mask = da.mean(da.asarray(bg_array, dtype=np.float32), axis=2) - 2**10
+    bg_mask_np = np.mean(bg_array.astype('float32'), axis=2).round()
+    print("calculated mean")
+    # bg_mask_np = bg_mask.compute()
 
-    # Generate background masks
-    bg_nuclei_mask = da.mean(da.asarray(bg_nuclei, dtype=np.float32), axis=2) - 2**10
-    # bg_colors_mask = da.mean(da.asarray(bg_colors, dtype=np.float32), axis=2) - 2**10
+    # image_dask_zarray_bgSubtracted = image_dask_zarray - bg_mask[:, :, np.newaxis]
+    # image_np_array_bgSubtracted = image_dask_zarray_bgSubtracted.compute()
+    image_np_array_bgSubtracted = image_np_array.astype('float32') - bg_mask_np[:, :, np.newaxis].astype('float32')
+    image_np_array_bgSubtracted[image_np_array_bgSubtracted < 0] = 0
+    tifffile.imwrite(os.path.join(output_location, "bg_subtracted.tif"), image_np_array_bgSubtracted.astype('uint16'))
 
-
-    # empty_frames_location = settings.EMPTY_FRAMES_LOCATION
-
-
-    image_dask_zarray_bgSubtracted = image_dask_zarray - bg_nuclei_mask[:, :, np.newaxis]
-    
-    return image_dask_zarray_bgSubtracted
+    # image_np_array_bgSubtracted = image_np_array.astype('float32') - bg_array.astype('float32')
+    # image_np_array_bgSubtracted[image_np_array_bgSubtracted < 0] = 0
+    # print("RAW - BG min", image_np_array_bgSubtracted.min())
+    # print("RAW - BG max", image_np_array_bgSubtracted.max())
+    # tifffile.imwrite(os.path.join(output_location, "raw_minus_bg.tif"), image_np_array_bgSubtracted.astype('uint16'))
+    print("Saved BG-subtracted file")
 
 
 def split_color_channels(input_location, output_location):
@@ -63,13 +78,14 @@ def color_registration(input_location, output_location):
     pass
 
 
-def preprocess_nuclei(location):
+def preprocess_nuclei(spool_file, location):
     bg_subtracted_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_bg_subtracted")
     try:
         os.makedirs(bg_subtracted_location)
     except:
         pass
-    subtract_background(location, bg_subtracted_location)
+    bg_file_name = glob(os.path.join(os.path.dirname(spool_file), f"{settings.EMPTY_FRAMES_FILE_NAME_FORMAT}272.fli"))[0]
+    subtract_background(location, bg_subtracted_location, bg_file_name)
     laser_corrected_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_laser_corrected")
     try:
         os.makedirs(laser_corrected_location)
@@ -80,13 +96,14 @@ def preprocess_nuclei(location):
     return preprocessed_location
 
 
-def preprocess_colors(location):
+def preprocess_colors(spool_file, location):
     bg_subtracted_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_bg_subtracted")
     try:
         os.makedirs(bg_subtracted_location)
     except:
         pass
-    subtract_background(location, bg_subtracted_location)
+    bg_file_name = glob(os.path.join(os.path.dirname(spool_file), f"{settings.EMPTY_FRAMES_FILE_NAME_FORMAT}088.fli"))[0]
+    subtract_background(location, bg_subtracted_location, bg_file_name)
     color_split_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_color_split")
     try:
         os.makedirs(color_split_location)

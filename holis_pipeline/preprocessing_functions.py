@@ -14,7 +14,8 @@ import os
 from numcodecs import Blosc
 # from numcodecs import blosc
 # blosc.set_nthreads(16)
-from zarr_stores.h5_nested_store import H5_Nested_Store
+# from zarr_stores.h5_nested_store import H5_Nested_Store
+from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 import zarr
 from skimage import io
 import dask
@@ -318,8 +319,8 @@ def read_header(file_name):
     
     # Extract header info
     fileinfo = raw_header_string.split('\\n')     
-    for idx, ii in enumerate(fileinfo): 
-        print(ii)
+    # for idx, ii in enumerate(fileinfo):
+        # print(ii)
 
     for ii in fileinfo:
         for key in header_info:
@@ -334,10 +335,18 @@ def read_header(file_name):
         except Exception:
             pass
     header_info['headerLength'] = header_length
-    print(header_info)
+    # print(header_info)
     return header_info, raw_header_string
 
 #######################################################################################
+
+def read_uint12_c(data_chunk):
+    data = np.frombuffer(data_chunk, dtype=np.uint8)
+    fst_uint8, mid_uint8, lst_uint8 = np.reshape(data, (data.shape[0] // 3, 3)).astype(np.uint16).T
+    fst_uint12 = ((mid_uint8 & 0x0F) << 8) | fst_uint8
+    snd_uint12 = (lst_uint8 << 4) | ((mid_uint8 & 0xF0) >> 4)
+    array = np.reshape(np.concatenate((fst_uint12[:, None], snd_uint12[:, None]), axis=1), 2 * fst_uint12.shape[0])
+    return array
 
 def read_data_file(spool_file, header_info=None):
 
@@ -355,15 +364,15 @@ def read_data_file(spool_file, header_info=None):
         with open(spool_file, 'rb') as f:
             f.seek(0, os.SEEK_END)
             size_of_file = f.tell()
-            print(f'{size_of_file=}')
+            # print(f'{size_of_file=}')
             header_len = header_info['headerLength']
-            print(f'{header_len=}')
+            # print(f'{header_len=}')
             data_size = size_of_file - header_len
-            print(f'{data_size=}')
+            # print(f'{data_size=}')
             num_frames_remainder = data_size%pixelInFrame_bit8
-            print(f'{num_frames_remainder=}')
+            # print(f'{num_frames_remainder=}')
             how_many_frames = int(data_size//pixelInFrame_bit8)
-            print(f'{how_many_frames=}')
+            # print(f'{how_many_frames=}')
 
     chunk_shape = (int(how_many_frames), int(header_info['y']), int(header_info['x']))
 
@@ -373,14 +382,14 @@ def read_data_file(spool_file, header_info=None):
 
     with open(spool_file, 'rb') as f:
         size_of_file = f.tell()
-        print(f'{size_of_file=}')
-        print(f'Reading {how_many_frames} frames')
+        # print(f'{size_of_file=}')
+        # print(f'Reading {how_many_frames} frames')
         f.seek(header_info['headerLength'])
         multi_frame = f.read(int(how_many_frames) * int(pixelInFrame_bit8))
 
     print(f'Forming Array')
     for idx in range(int(how_many_frames)):
-        print(f'Converting {idx} of {how_many_frames}')
+        # print(f'Converting {idx} of {how_many_frames}')
         where_to_start = idx * pixelInFrame_bit8
         data = multi_frame[where_to_start:where_to_start + pixelInFrame_bit8]
 

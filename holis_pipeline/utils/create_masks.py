@@ -16,10 +16,10 @@ import dask
 import dask.array as da
 from skimage.transform import resize
 
-from .settings import (
-    CHUNK_SIZE, NUCLEI_DIR, OUTPUT_DIR, SCALE_USED_FOR_MASKS, NUCLEI_RESOLUTION,
-    DENSE_REGIONS_MASK, FOREGROUND_MASK, SCALE
-)
+from holis_pipeline.settings import * # (
+#     CHUNK_SIZE, NUCLEI_DIR, OUTPUT_DIR, SCALE_USED_FOR_MASKS, NUCLEI_RESOLUTION,
+#     DENSE_REGIONS_MASK, FOREGROUND_MASK, SCALE
+# )
 
 
 def get_origin_coords_rounded(ndim, patchify_chunks_shape, chunk_size):

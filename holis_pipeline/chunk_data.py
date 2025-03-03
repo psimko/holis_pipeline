@@ -9,7 +9,7 @@ from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 from holis_pipeline import settings
 from holis_pipeline.utils.chunks import get_chunk_indices, get_origin_coords
 
-log = logging.getlogger(__name__)
+log = logging.getLogger(__name__)
 
 
 def chunk_data(nuclei_dir):

@@ -22,7 +22,13 @@ FOREGROUND_MASK = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_
 
 
 # Pre-processing
-EMPTY_FRAMES_LOCATION = ""  # path on file system
+EMPTY_FRAMES_FILE_NAME_FORMAT = "wholeScanBG-*"  # background (empty) scans
 LASER_PATTERN_MATRIX = ""  # text file location
 ABSORPTION_MATRIX = ""  # text file location
 MIXING_MATRIX = ""  # text file location
+
+
+
+dir_name = '/bil/proj/rf1hillman/2024_07_29_AI7_EH5k_human_finalMarkerCombination_100mm/raw_HiCAMdata/'
+location_nuclei = 'wholeScan-run013-z01-y13-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli_ZARR_OUT/'
+location_colors = 'wholeScan-run013-z01-y13-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-088.fli_ZARR_OUT/'

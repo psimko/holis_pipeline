@@ -16,6 +16,7 @@ inputs:
 2) subtract background (nuclei, colors)
 3) split color channels (colors)
 4) do laser correction (nuclei, colors)
+4) unmixing (nuclei, colors)
 5) chunk (nuclei)
 6) run pytorch unet on all chunks
 7) fix chunking artifacts
@@ -68,8 +69,10 @@ command-line arguments - Inputs (colors, nuclei) and output
 """
 
 NUCLEI_FLI = sys.argv[1]
-COLORS_FLI = sys.argv[2]
-OUTPUT_DIR = sys.argv[3]
+# COLORS_FLI = sys.argv[2]
+OUTPUT_DIR = sys.argv[2]
+
+COLORS_FLI = NUCLEI_FLI.replace('272.fli', '088.fli')
 
 work_dir = os.getcwd()
 print("Working directory: ", work_dir)
@@ -96,73 +99,77 @@ def main():
     log.info(f"START TIME: {tstart}")
     create_folders(OUTPUT_DIR)
 
-    nuclei_channel = settings.NUCLEI_CHANNEL
-
     # Read data to zarr
-    NUCLEI_DIR = read_fli_as_zarr(NUCLEI_FLI, os.path.join(OUTPUT_DIR, 'nuclei'))
-    COLORS_DIR = read_fli_as_zarr(COLORS_FLI, os.path.join(OUTPUT_DIR, 'colors'))
+    print("Reading data")
+    NUCLEI_DIR = read_fli_as_zarr(NUCLEI_FLI, os.path.join(OUTPUT_DIR, os.path.basename(NUCLEI_FLI)))
+    print("Read nuclei channel")
+    COLORS_DIR = read_fli_as_zarr(COLORS_FLI, os.path.join(OUTPUT_DIR, os.path.basename(COLORS_FLI)))
+    print("Read color channels")
 
     # Preprocess data
-    NUCLEI_DIR = preprocess_nuclei(NUCLEI_DIR)
-    COLORS_DIR = preprocess_colors(COLORS_DIR)  # TODO separate task
+    print("Preprocessing data")
+    NUCLEI_DIR = preprocess_nuclei(NUCLEI_FLI, NUCLEI_DIR)
+    print("Preprocessed nuclei")
+    # COLORS_DIR = preprocess_colors(COLORS_FLI, COLORS_DIR)  # TODO separate task
+    # print("Preprocessed colors")
 
-    output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')  # TODO: do we need scale? Will it always be full resolution?
-
-    chunk_indices = chunk_data(NUCLEI_DIR)
-
-    if FOREGROUND_MASKS_ENABLED:
-        # extract low-resolution masks for foreground
-        if not os.path.exists(os.path.join(output_folder_scale, "zero_chunks.npy")):
-            get_chunks_with_background()
-        bg_chunks = set(np.load(os.path.join(output_folder_scale, "zero_chunks.npy")))
-    else:
-        bg_chunks = set()
-
-    if DENSE_REGION_MASK_ENABLED:
-        # extract low-resolution masks for bright spots
-        if not os.path.exists(os.path.join(output_folder_scale, "bright_chunks.npy")):
-            get_chunks_with_bright_signal()
-        bright_chunks = set(np.load(os.path.join(output_folder_scale, "bright_chunks.npy")))
-    else:
-        bright_chunks = set()
-
-    # ================= Create nuclei detection jobs =================
-
-    # check what chunks got extracted - save this info (compare with fg chunks list)
-    # for extracted chunks generate and submit nuclei detection jobs
-    fg_chunks = set([x for x in range(len(chunk_indices)) if x not in bg_chunks and x not in bright_chunks])
-    log.info(f"Total foreground chunks: {len(fg_chunks)}")
-    detect_cells_deepblink_slurm(list(fg_chunks), jobs_folder)
-    log.info("All nuclei detection tasks were submitted")
-
-    # check which csv files have been generated
-    spectral_info_folder = os.path.join(output_folder_scale, 'spectral_info')
-    sent_tasks = set()
-    remaining_chunks = fg_chunks.copy()
-    while len(remaining_chunks):
-        print("Chunks remaining to do nuclei detection", len(remaining_chunks))
-        detection_done = set([
-            int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(detection_folder, "*.csv"))
-        ])
-        chunk_numbers_set = detection_done - sent_tasks
-        sent_tasks.update(chunk_numbers_set)
-        remaining_chunks = fg_chunks - sent_tasks
-        time.sleep(2)
-
-    log.info("All nuclei detection jobs finished")
-    tfin_detection = datetime.now()
-    log.info(f"Time spent on extraction + nuclei detection: {tfin_detection - tstart}")
-
-    # ================= Merge masks and df with coordinates =================
-
-    combined_mask_location = combine_masks(NUCLEI_DIR)
-    no_artifact_mask_location = remove_chunking_artifacts(combined_mask_location)
-    coords_file = extract_coords(no_artifact_mask_location, OUTPUT_DIR)
-
-    spectral_info_df = get_spectral_info(coords_file)  # single task? No chunks?
-    # TODO: should spectral info be extracted after all neighbor slabs are finished?
-    print("Spectral information saved at", spectral_info_df)
-    log.info("All Done!")
+    # output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')  # TODO: do we need scale? Will it always be full resolution?
+    #
+    # chunk_indices = chunk_data(NUCLEI_DIR)
+    #
+    # if FOREGROUND_MASKS_ENABLED:
+    #     # extract low-resolution masks for foreground
+    #     if not os.path.exists(os.path.join(output_folder_scale, "zero_chunks.npy")):
+    #         get_chunks_with_background()
+    #     bg_chunks = set(np.load(os.path.join(output_folder_scale, "zero_chunks.npy")))
+    # else:
+    #     bg_chunks = set()
+    #
+    # if DENSE_REGION_MASK_ENABLED:
+    #     # extract low-resolution masks for bright spots
+    #     if not os.path.exists(os.path.join(output_folder_scale, "bright_chunks.npy")):
+    #         get_chunks_with_bright_signal()
+    #     bright_chunks = set(np.load(os.path.join(output_folder_scale, "bright_chunks.npy")))
+    # else:
+    #     bright_chunks = set()
+    #
+    # # ================= Create nuclei detection jobs =================
+    #
+    # # check what chunks got extracted - save this info (compare with fg chunks list)
+    # # for extracted chunks generate and submit nuclei detection jobs
+    # fg_chunks = set([x for x in range(len(chunk_indices)) if x not in bg_chunks and x not in bright_chunks])
+    # log.info(f"Total foreground chunks: {len(fg_chunks)}")
+    # detect_cells_deepblink_slurm(list(fg_chunks), jobs_folder)
+    # log.info("All nuclei detection tasks were submitted")
+    #
+    # # check which csv files have been generated
+    # spectral_info_folder = os.path.join(output_folder_scale, 'spectral_info')
+    # sent_tasks = set()
+    # remaining_chunks = fg_chunks.copy()
+    # while len(remaining_chunks):
+    #     print("Chunks remaining to do nuclei detection", len(remaining_chunks))
+    #     detection_done = set([
+    #         int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(detection_folder, "*.csv"))
+    #     ])
+    #     chunk_numbers_set = detection_done - sent_tasks
+    #     sent_tasks.update(chunk_numbers_set)
+    #     remaining_chunks = fg_chunks - sent_tasks
+    #     time.sleep(2)
+    #
+    # log.info("All nuclei detection jobs finished")
+    # tfin_detection = datetime.now()
+    # log.info(f"Time spent on extraction + nuclei detection: {tfin_detection - tstart}")
+    #
+    # # ================= Merge masks and df with coordinates =================
+    #
+    # combined_mask_location = combine_masks(NUCLEI_DIR)
+    # no_artifact_mask_location = remove_chunking_artifacts(combined_mask_location)
+    # coords_file = extract_coords(no_artifact_mask_location, OUTPUT_DIR)
+    #
+    # spectral_info_df = get_spectral_info(coords_file, COLORS_DIR)  # single task? No chunks?
+    # # TODO: should spectral info be extracted after all neighbor slabs are finished?
+    # print("Spectral information saved at", spectral_info_df)
+    # log.info("All Done!")
 
 
 if __name__ == "__main__":

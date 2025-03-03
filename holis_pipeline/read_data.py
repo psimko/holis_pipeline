@@ -1,6 +1,9 @@
 import os
 
-from holis_tools.hicam_utils import send_hicam_to_zarr_par_read_once
+import zarr
+
+# from holis_tools.hicam_utils import send_hicam_to_zarr_par_read_once
+from holis_pipeline.preprocessing_functions import send_hicam_to_zarr_par_read_once
 
 
 def read_fli_as_zarr(path_to_fli, output_location):
@@ -13,5 +16,8 @@ def read_fli_as_zarr(path_to_fli, output_location):
         os.makedirs(output_location)
     except:
         pass
-    send_hicam_to_zarr_par_read_once(path_to_fli, output_location)
+    try:
+        send_hicam_to_zarr_par_read_once(path_to_fli, output_location)
+    except zarr.errors.ContainsArrayError:
+        pass
     return output_location

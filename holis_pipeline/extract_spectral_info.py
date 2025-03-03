@@ -29,7 +29,7 @@ def get_spectral_info_slurm(chunk_numbers, jobs_folder, spectral_info_folder):
         submit_slurm_task_compute(task_path)
 
 
-def get_spectral_info(coords_file):
+def get_spectral_info(coords_file, colors_dir):
     pass
     # ================= Create spectral extraction jobs =================
 
