@@ -1,25 +1,45 @@
 # holis_pipeline
 HOLiS pipeline for nuclei detection and extraction of spectral information
 
-This branch is for analyzing mouse brains.<br/>
-This branch is for ome-zarr data.<br/>
-This branch introduces the new method for extracting
-spectral information based on nuclei segmentation mask and
-adding volumetric layers around it.
+This branch is for analyzing the human hemibrain.<br/>
+This branch is for HICAM data.<br/>
+This branch introduces pre-processing that is run before nuclei detection and spectral extraction.
 
-Current version expects to have foreground/background mask and mask of very bright signal areas (like cerebellum in the mouse brain) that distort the detection.
-1) Allocate resources for fusing tiffs and creating zarr (steps 2-4) using `salloc --ntasks=1 --mem 2900G --cpus-per-task 80`. Load miniconda3 module, activate the virtual environment for conversion.
-2) Fuse stripes into composite tiff planes, using `fuse_tiffs.py` script (`python fuse_tiffs.py <path_to_tiff_stacks> <path_to_output_folder>`)
-3) Make sure the composite tiffs are arranged into folders (nuclei/1, colors/2, colors/3, colors/4, colors/5).
-4) Build ome-zarr stores for nuclei and colors separately using `stack_to_multiscale_ngff` package.
-Example command for nuclei: `python -i builder.py /bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/composites/nuclei /bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/omezarr/nuclei.omehans -s 1 1 1.34 1.54 2.0 --clevel 5 -ft tif -tmp '/scratch/tmp_convert' -sk --colors green --channelLabels SytoG24 --name AI7_EH5f3 -mem 2900`<br/>
-Example command for colors: `python -i builder.py /bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/composites/colors /bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_AI7_EH5f/omezarr/colors.omehans -s 1 1 1.34 1.54 2.0 --clevel 5 -ft tif -tmp '/scratch/tmp_convert' -sk --colors green yellow orange red --channelLabels NeuN GAD1_ACTA2 PV_GFAP nNOS_lba1 --name AI7_EH5f3 -mem 2900`
-5) From ome-zarr, extract low resolution level (typically scale 2-4), using `extract_low_resolution` function from `holis_segment_foreground_and_cerebellum.py` script.
-6) Create the foreground/background mask and mask of very bright signal areas on low-resolution version of the data, using napari_apoc plugin, and specify paths to them in the `holis_pipeline/utils/settings.py` file. Remember to also specify the correct resolution level you used to extract these masks.
-7) Change the holis_pipeline/utils/settings.py file to specify other required parameters
-8) run `interact` to get to a large-memory-node, then `module load miniconda3`
-9) Activate your large-memory-node environment
-10) Run the pipeline: `python_holis_pipeline_slab_mouse.py`
-11) Re-run if not all spectral information jobs got submitted
-12) Once it's built the final csv file, find it at your output directory/scale_0/
+The pipeline works on one pair of spool (.fli) files
 
+Changes need to be made in the settings.py file to set paths and file naming patterns.
+
+Takes in one spool file for nuclei and corresponding spool file for colors.
+Outputs detected nuclei and extracted spectral information.
+
+inputs:
+- 1 hicam (.fli) file (nuclei - camera the suffix is 272)
+- desired output location
+
+Corresponding hicam (.fli) file for colors (camera the suffix is 088) is found automatically
+
+1) read fli files to zarr (nuclei, colors)
+2) subtract background (nuclei, colors)
+3) split color channels (colors)
+4) do laser correction (nuclei, colors)
+5) unmixing (nuclei, colors)
+6) chunk (nuclei)
+7) run pytorch unet on all chunks
+8) fix chunking artifacts
+9) unchunk (nuclei, colors)
+10) save coordinates (nuclei)
+11) color_registration (colors)
+12) get spectral information on all chunks (nuclei, colors)
+13) delete intermediate files (zarr, preprocessed zarr, any chunks)
+
+outputs:
+- 1 combined mask of nuclei
+- 1 csv file with coordinates
+- 1 csv file with spectral information
+
+To run the pipeline:
+
+1) Change the holis_pipeline/utils/settings.py file to specify other required parameters
+2) run `interact` to get to a large-memory-node, then `module load miniconda3`
+3) Activate your large-memory-node environment
+4) Run the pipeline: `python holis_pipeline_hemibrain.py`
