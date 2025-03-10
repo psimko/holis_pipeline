@@ -107,9 +107,99 @@ def laser_correction(input_location, output_location):  # tbd whether needs to b
         - mixing (fluorescence) matrix (n_fluorophores, n_channels) - (5x5) - first column for nuclei
     Output: corrected .omehans the same shape as input
     """
-    laser_pattern_matrix_path = settings.LASER_PATTERN_MATRIX
-    absorption_matrix_path = settings.ABSORPTION_MATRIX
-    mixing_matrix_path = settings.MIXING_MATRIX
+
+def laser_correction_byInverse(m):  # tbd whether needs to be processed separately
+    """
+    Input:
+        - np.array (channels,z,y)
+        - laser pattern matrix (y,z) shape
+        - absorption matrix (n_fluorophores, n_lasers) - (5x4) - first row   for nuclei
+        - mixing (fluorescence) matrix (n_fluorophores, n_channels) - (5x5) - first column for nuclei
+    Output: corrected np.array (channels,z,y)
+    """
+    ## Load necessary matrices - this could be done outside of the function
+    ## The notation here is what Malte uses, I change it (slightly) to my notation when I start the computation
+
+    # Laser spatial pattern matrix - nuclear channel
+    POWELL_NUC_MASK_FF_norm = settings.CORRECTION_DATA['POWELL_NUC_MASK_FF_norm']
+    # Laser spatial pattern matrix - splitter (4 channels)
+    POWELL_SPL_MASK_FF_norm = settings.CORRECTION_DATA['POWELL_SPL_MASK_FF_norm']
+
+    # Fluorophore x Channel matrix (This is the fluorescnece matrix)
+    Flch = settings.LASER_CORRECTION_DATA['Flch']
+
+    # Normalize along columns - so each entry (i,j) is the percentage of the signal in channel j coming from fluorophore i
+    Flch_rel = Flch.copy()
+    Flch_rel = Flch_rel / np.sum(Flch_rel, axis=1, keepdims=True)
+
+    # Fluorophore x Laser matrix (This is the absorbtion matrix)
+    excitation_efficiency = settings.LASER_CORRECTION_DATA['excitation_efficiency']
+
+    ## Computation 
+
+    F = Flch_rel
+    E = excitation_efficiency.T
+    
+    num_lasers = E.shape[0]
+    num_channels = F.shape[0]
+
+    # Q combines the absorbtion and fluorescence matrices, each will later be multiplied by the corresponding laser pattern, summed and inverted
+    A = []
+
+    for i in range(num_lasers):
+        l = E[i,:]
+        A_temp = np.tile(l, (num_channels, 1))
+        A.append(A_temp)
+        
+    Q = []
+
+    # For channels
+    for i in range(num_lasers):
+        Q_temp = F * A[i]
+        #Q_temp = Q_temp[1:,1:]
+        Q.append(Q_temp)
+
+    # Corrected output array, m is for measurement
+    m_corr = np.empty((num_channels, z_size, y_size))
+
+    # Define the laser pattern matrices and resize the nuclear channel to the size of color channels
+    S_nuc = POWELL_NUC_MASK_FF_norm # One matrix per laser: (lasers, z, y) = (4,1024,1280)
+    S_channels = POWELL_SPL_MASK_FF_norm # One matrix per channel per laser: (channels, lasers, z, y) = (4,4,512,640)
+
+    resize_factors = (1, 1/2, 1/2)  #(1, 1/8, 1/8)
+    S_nuc_resized = zoom(S_nuc, resize_factors, order=1)
+    
+    # Combine S_nuc and S_channels into one array, inthe case it should be (channels, lasers, z, y) = (5,4,512,640)
+    S_nuc_expanded = np.expand_dims(S_nuc_resized, axis=0)
+    S_resized = np.concatenate((S_nuc_expanded, S_channels), axis=0) 
+
+    # m_channels is the input array, each m[i] should be (512,640) in this function
+    m_channels = np.array([m[0], m[1], m[2], m[3], m[4]])
+
+    for z in tqdm(range(z_size)):
+        for y in range(y_size):
+            S = []
+            for i in range(num_lasers):
+                #v_temp = S_channels_resized[:,i,z,y]
+                v_temp = S_resized[:,i,z,y]
+                S_temp = np.diag(v_temp)
+                S.append(S_temp)
+            G = sum(np.dot(S[i], Q[i]) for i in range(num_lasers))
+            # Check if matrix is invertible
+            G_det = np.linalg.det(G)
+            if G_det != 0:
+                c = []
+                G_inv = np.linalg.pinv(G)
+                c = np.dot(G_inv,m_channels[:,z,y])
+                m_corr[:, z, y] = c
+            else:
+                print("Matrix is not invertible.")   
+
+    return m_corr
+
+        
+
+
 
 
 def color_registration(input_location, output_location):

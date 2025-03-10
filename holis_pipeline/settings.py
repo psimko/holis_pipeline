@@ -27,8 +27,13 @@ LASER_PATTERN_MATRIX = ""  # text file location
 ABSORPTION_MATRIX = ""  # text file location
 MIXING_MATRIX = ""  # text file location
 
+# Load matlab files
+CORRECTION_DATA = sio.loadmat('/bil/proj/rf1hillman/2024_07_29_AI7_EH5k_human_finalMarkerCombination_100mm/code_Matlab/correctionMatrices_dualHiCAM_100mm_07-29-2024.mat')
+REGISTRATION_DATA = sio.loadmat('/bil/proj/rf1hillman/2024_07_29_AI7_EH5k_human_finalMarkerCombination_100mm/code_Matlab/registrationMatrices_sample.mat')
+LASER_CORRECTION_DATA = sio.loadmat('/bil/proj/rf1hillman/2024_07_29_AI7_EH5k_human_finalMarkerCombination_100mm/code_Matlab/SimulationMatrices_equalPower_firstHemibrain')
 
 
 dir_name = '/bil/proj/rf1hillman/2024_07_29_AI7_EH5k_human_finalMarkerCombination_100mm/raw_HiCAMdata/'
 location_nuclei = 'wholeScan-run013-z01-y13-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli_ZARR_OUT/'
 location_colors = 'wholeScan-run013-z01-y13-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-088.fli_ZARR_OUT/'
+
