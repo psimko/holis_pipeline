@@ -28,9 +28,9 @@ ABSORPTION_MATRIX = ""  # text file location
 MIXING_MATRIX = ""  # text file location
 
 # Load matlab files
-CORRECTION_DATA = sio.loadmat('/bil/proj/rf1hillman/2024_07_29_AI7_EH5k_human_finalMarkerCombination_100mm/code_Matlab/correctionMatrices_dualHiCAM_100mm_07-29-2024.mat')
-REGISTRATION_DATA = sio.loadmat('/bil/proj/rf1hillman/2024_07_29_AI7_EH5k_human_finalMarkerCombination_100mm/code_Matlab/registrationMatrices_sample.mat')
-LASER_CORRECTION_DATA = sio.loadmat('/bil/proj/rf1hillman/2024_07_29_AI7_EH5k_human_finalMarkerCombination_100mm/code_Matlab/SimulationMatrices_equalPower_firstHemibrain')
+CORRECTION_DATA = '/CBI_FastStore/Iana/holis/hicam/code_Matlab/correctionMatrices_dualHiCAM_100mm_07-29-2024.mat'
+REGISTRATION_DATA = '/CBI_FastStore/Iana/holis/hicam/code_Matlab/registrationMatrices_sample.mat'
+LASER_CORRECTION_DATA = '/CBI_FastStore/Iana/holis/hicam/code_Matlab/SimulationMatrices_equalPower_firstHemibrain'
 
 
 dir_name = '/bil/proj/rf1hillman/2024_07_29_AI7_EH5k_human_finalMarkerCombination_100mm/raw_HiCAMdata/'

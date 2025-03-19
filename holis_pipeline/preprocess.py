@@ -3,6 +3,7 @@ from glob import glob
 
 import dask.array as da
 import numpy as np
+import scipy
 import tifffile
 
 from holis_pipeline import settings
@@ -46,32 +47,34 @@ def subtract_background(input_location, output_location, bg_file_name):
     print("Saved BG-subtracted file")
 
 
-def split_color_channels(data_temp):
+def split_color_channels(input_location, output_location):
     """
     Takes a 3D image splitter data and outputs a 4D array with shape (ch, z, y, x).
     """
-
+    data_temp = tifffile.imread(os.path.join(input_location, "bg_subtracted.tif"))
     ss = data_temp.shape
 
     # Define four channel regions by splitting along y and x axes
-    temp_ch1 = data_temp[round(0.5 * ss[0]):ss[0], round(0.5 * ss[1]):ss[1], :]
-    temp_ch2 = data_temp[round(0.5 * ss[0]):ss[0], :round(0.5 * ss[1]), :]
-    temp_ch3 = data_temp[:round(0.5 * ss[0]), round(0.5 * ss[1]):ss[1], :]
-    temp_ch4 = data_temp[:round(0.5 * ss[0]), :round(0.5 * ss[1]), :]
-    
-    #     temp_ch1 = np.asarray(temp_ch1)
-    #     temp_ch2 = np.asarray(temp_ch2)
-    #     temp_ch3 = np.asarray(temp_ch3)
-    #     temp_ch4 = np.asarray(temp_ch4)
+    # temp_ch1 = data_temp[round(0.5 * ss[0]):ss[0], round(0.5 * ss[1]):ss[1], :]
+    # temp_ch2 = data_temp[round(0.5 * ss[0]):ss[0], :round(0.5 * ss[1]), :]
+    # temp_ch3 = data_temp[:round(0.5 * ss[0]), round(0.5 * ss[1]):ss[1], :]
+    # temp_ch4 = data_temp[:round(0.5 * ss[0]), :round(0.5 * ss[1]), :]
 
+    temp_ch1 = data_temp[:, :ss[1]//2, :ss[2]//2]
+    temp_ch2 = data_temp[:, :ss[1]//2, ss[2]//2:]
+    temp_ch3 = data_temp[:, ss[1]//2:, :ss[2]//2]
+    temp_ch4 = data_temp[:, ss[1]//2:, ss[2]//2:]
+    
     print(temp_ch1.shape)
     print(temp_ch2.shape)
     print(temp_ch3.shape)
     print(temp_ch4.shape)
 
     # Optional offsets for each channel (if needed)
-    y = da.zeros(4, dtype=int)
-    z = da.zeros(4, dtype=int)
+    y = np.zeros(4, dtype=int)
+    # y = da.zeros(4, dtype=int)
+    z = np.zeros(4, dtype=int)
+    # z = da.zeros(4, dtype=int)
     print(y)
     print(z)
 
@@ -80,22 +83,23 @@ def split_color_channels(data_temp):
     cropZ = 512
 
     # Apply cropping to each channel
-    temp_ch1 = temp_ch1[z[0]:z[0] + cropZ, y[0]:y[0] + cropY, :]
-    temp_ch2 = temp_ch2[z[1]:z[1] + cropZ, y[1]:y[1] + cropY, :]
-    temp_ch3 = temp_ch3[z[2]:z[2] + cropZ, y[2]:y[2] + cropY, :]
-    temp_ch4 = temp_ch4[z[3]:z[3] + cropZ, y[3]:y[3] + cropY, :]
+    # temp_ch1 = temp_ch1[z[0]:z[0] + cropZ, y[0]:y[0] + cropY, :]
+    # temp_ch2 = temp_ch2[z[1]:z[1] + cropZ, y[1]:y[1] + cropY, :]
+    # temp_ch3 = temp_ch3[z[2]:z[2] + cropZ, y[2]:y[2] + cropY, :]
+    # temp_ch4 = temp_ch4[z[3]:z[3] + cropZ, y[3]:y[3] + cropY, :]
     
-    print(temp_ch1.shape)
-    print(temp_ch2.shape)
-    print(temp_ch3.shape)
-    print(temp_ch4.shape)
+    # print(temp_ch1.shape)
+    # print(temp_ch2.shape)
+    # print(temp_ch3.shape)
+    # print(temp_ch4.shape)
 
     # Stack channels along a new axis and permute to shape (ch, z, y, x)
     #data_temp = np.stack([temp_ch1, temp_ch2, temp_ch3, temp_ch4], axis=0)
     #data_temp = da.concatenate([temp_ch1[ :, :, :], temp_ch2[ :, :, :], temp_ch3[ :, :, :], temp_ch4[ :, :, :]], axis=0)
-    data_temp = da.concatenate([temp_ch1[None, :, :, :], temp_ch2[None, :, :, :], temp_ch3[None, :, :, :], temp_ch4[None, :, :, :]], axis=0)
-    
-    return data_temp
+    # data_temp = da.concatenate([temp_ch1[None, :, :, :], temp_ch2[None, :, :, :], temp_ch3[None, :, :, :], temp_ch4[None, :, :, :]], axis=0)
+    data_temp = np.concatenate([temp_ch1[None, :, :, :], temp_ch2[None, :, :, :], temp_ch3[None, :, :, :], temp_ch4[None, :, :, :]], axis=0)
+    print("data_temp shape", data_temp.shape)
+    tifffile.imwrite(os.path.join(output_location, "color_split.tif"), data_temp)
 
 
 def laser_correction(input_location, output_location):  # tbd whether needs to be processed separately
@@ -107,6 +111,11 @@ def laser_correction(input_location, output_location):  # tbd whether needs to b
         - mixing (fluorescence) matrix (n_fluorophores, n_channels) - (5x5) - first column for nuclei
     Output: corrected .omehans the same shape as input
     """
+    # data = tifffile.imread(os.path.join(input_location, "color_split.tif"))
+    data = tifffile.imread(os.path.join(input_location, "bg_subtracted.tif"))
+    corrected_data = laser_correction_byInverse(data)
+    tifffile.imwrite(os.path.join(output_location, 'laser_corrected.tif'), corrected_data)
+
 
 def laser_correction_byInverse(m):  # tbd whether needs to be processed separately
     """
@@ -120,20 +129,29 @@ def laser_correction_byInverse(m):  # tbd whether needs to be processed separate
     ## Load necessary matrices - this could be done outside of the function
     ## The notation here is what Malte uses, I change it (slightly) to my notation when I start the computation
 
+    CORRECTION_DATA = scipy.io.loadmat(settings.CORRECTION_DATA)
+    LASER_CORRECTION_DATA = scipy.io.loadmat(settings.LASER_CORRECTION_DATA)
+
     # Laser spatial pattern matrix - nuclear channel
-    POWELL_NUC_MASK_FF_norm = settings.CORRECTION_DATA['POWELL_NUC_MASK_FF_norm']
+    POWELL_NUC_MASK_FF_norm = CORRECTION_DATA['POWELL_NUC_MASK_FF_norm']
+    print('POWELL_NUC_MASK_FF_norm', POWELL_NUC_MASK_FF_norm.shape)
+
     # Laser spatial pattern matrix - splitter (4 channels)
-    POWELL_SPL_MASK_FF_norm = settings.CORRECTION_DATA['POWELL_SPL_MASK_FF_norm']
+    POWELL_SPL_MASK_FF_norm = CORRECTION_DATA['POWELL_SPL_MASK_FF_norm']
+    print('POWELL_SPL_MASK_FF_norm', POWELL_SPL_MASK_FF_norm.shape)
 
     # Fluorophore x Channel matrix (This is the fluorescnece matrix)
-    Flch = settings.LASER_CORRECTION_DATA['Flch']
+    Flch = LASER_CORRECTION_DATA['Flch']
+    print('Flch', Flch.shape)
 
     # Normalize along columns - so each entry (i,j) is the percentage of the signal in channel j coming from fluorophore i
     Flch_rel = Flch.copy()
     Flch_rel = Flch_rel / np.sum(Flch_rel, axis=1, keepdims=True)
 
     # Fluorophore x Laser matrix (This is the absorbtion matrix)
-    excitation_efficiency = settings.LASER_CORRECTION_DATA['excitation_efficiency']
+    excitation_efficiency = LASER_CORRECTION_DATA['excitation_efficiency']
+
+    print('excitation_efficiency', excitation_efficiency.shape)
 
     ## Computation 
 
@@ -141,7 +159,9 @@ def laser_correction_byInverse(m):  # tbd whether needs to be processed separate
     E = excitation_efficiency.T
     
     num_lasers = E.shape[0]
+    print('num_lasers', num_lasers)
     num_channels = F.shape[0]
+    print('num_channels', num_channels)
 
     # Q combines the absorbtion and fluorescence matrices, each will later be multiplied by the corresponding laser pattern, summed and inverted
     A = []
@@ -158,6 +178,9 @@ def laser_correction_byInverse(m):  # tbd whether needs to be processed separate
         Q_temp = F * A[i]
         #Q_temp = Q_temp[1:,1:]
         Q.append(Q_temp)
+
+    z_size = 512
+    y_size = 640
 
     # Corrected output array, m is for measurement
     m_corr = np.empty((num_channels, z_size, y_size))
@@ -196,10 +219,6 @@ def laser_correction_byInverse(m):  # tbd whether needs to be processed separate
                 print("Matrix is not invertible.")   
 
     return m_corr
-
-        
-
-
 
 
 def color_registration(input_location, output_location):
@@ -245,12 +264,17 @@ def preprocess_colors(spool_file, location):
         pass
     # color_data_zyx = np.transpose(color_data, (1, 2, 0)) I think the splitter data needs to be transposed like
     split_color_channels(bg_subtracted_location, color_split_location)
+
     laser_corrected_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_laser_corrected")
+
     try:
         os.makedirs(laser_corrected_location)
     except:
         pass
     laser_correction(color_split_location, laser_corrected_location)
+
+    return
+
     color_registered_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_color_registered")
     try:
         os.makedirs(color_registered_location)
