@@ -20,6 +20,8 @@ def subtract_background(input_location, output_location, bg_file_name):
            empty frames (.mat) - the same shape as the data (1 file per nuclei+colors fli pair)
     output: flattened .omehans - same shape as input
     """
+    if os.path.exists(os.path.join(output_location, "bg_subtracted.tif")):
+        return
     print("reading zarr")
     image_dask_zarray = read_omehans(input_location)
     image_np_array = image_dask_zarray.compute()
@@ -102,7 +104,7 @@ def split_color_channels(input_location, output_location):
     tifffile.imwrite(os.path.join(output_location, "color_split.tif"), data_temp)
 
 
-def laser_correction(input_location, output_location):  # tbd whether needs to be processed separately
+def laser_correction_nuclei(input_location, output_location):
     """
     Input:
         - flattened .omehans
@@ -111,10 +113,100 @@ def laser_correction(input_location, output_location):  # tbd whether needs to b
         - mixing (fluorescence) matrix (n_fluorophores, n_channels) - (5x5) - first column for nuclei
     Output: corrected .omehans the same shape as input
     """
-    # data = tifffile.imread(os.path.join(input_location, "color_split.tif"))
     data = tifffile.imread(os.path.join(input_location, "bg_subtracted.tif"))
-    corrected_data = laser_correction_byInverse(data)
-    tifffile.imwrite(os.path.join(output_location, 'laser_corrected.tif'), corrected_data)
+    CORRECTION_DATA = scipy.io.loadmat(settings.CORRECTION_DATA)
+    LASER_CORRECTION_DATA = scipy.io.loadmat(settings.LASER_CORRECTION_DATA)
+    excitation_efficiency = LASER_CORRECTION_DATA['excitation_efficiency']
+
+    # Laser power normalization
+    laser_power_at_sample = np.array([0.022, 0.115, 0.263, 0.285])
+    laser_power = laser_power_at_sample / np.max(laser_power_at_sample)  # Normalize laser powers
+
+    Flch = LASER_CORRECTION_DATA['Flch']
+    Flch_rel = Flch.copy()
+    Flch_rel = Flch_rel / np.sum(Flch_rel, axis=1, keepdims=True)
+    POWELL_NUC_MASK_FF_norm = CORRECTION_DATA['POWELL_NUC_MASK_FF_norm']
+
+    # 1. Multiply the laser pattern by laser intensity
+    laser_correction_Nuc = laser_power[:, np.newaxis, np.newaxis] * POWELL_NUC_MASK_FF_norm
+
+    # 2. Reshape correction matrix to a 2d matrix: (lasers) x (z x y)
+    # and multiply (dot product) by the first row (that's the nuclei fluor) of the excitation matrix
+    # you're computing how much each laser's pattern contributes to the nuclei fluor
+    # output is a 1 x (z x y) matrix
+    sLCN = laser_correction_Nuc.shape
+    laser_correction_ch_Nuc = np.dot(excitation_efficiency[0, :],
+                                     laser_correction_Nuc.reshape((sLCN[0], sLCN[1] * sLCN[2])))
+
+    # 3. Multiply (dot product) by the first column of the fluorescence matrix (that's the distribution of fluors in the nuclear channel)
+    # you're computing how much of the laser pattern comes from which fluor (see comment)
+    # output is a 5 x (z x y) 2d matrix (that's why we need the np.newaxis)
+    laser_correction_ch_Nuc = np.dot(Flch_rel[:, 0][:, np.newaxis], laser_correction_ch_Nuc[np.newaxis, :])
+
+    # 4. Reshape back to a 3d matrix fluors x z x y and sum across the fluors
+    laser_correction_ch_Nuc = laser_correction_ch_Nuc.reshape(5, sLCN[1], sLCN[2])
+    laser_correction_ch_Nuc = np.sum(laser_correction_ch_Nuc, axis=0)  # Squeeze sum over first axis
+
+    # 5. Divide the nuclear channel image by the correction matrix (element-wise)
+    corrected_data = data / (laser_correction_ch_Nuc + 0.001)  # (7500, 1024, 1280) / (1024, 1280)
+    min_val = corrected_data.min()
+    max_val = corrected_data.max()
+    corrected_data = (corrected_data - min_val) / (max_val - min_val)
+    corrected_data = corrected_data * 65535
+
+    # Comment: so if we do step 3 I think in step 4 we shouldn't add across fluors but divide in step 5 by laser_correction_ch_Nuc[0]
+    # Otherwise, if we are going to sum anyway we don't need step (4) and can just divide by laser_correction_ch_Nuc, because otherwise it seems like we are redistributing a value and then summing it back.
+
+    tifffile.imwrite(os.path.join(output_location, 'laser_corrected.tif'), np.round(corrected_data).astype('uint16'))
+
+
+def laser_correction_colors(input_location, output_location):
+    data = tifffile.imread(os.path.join(input_location, "color_split.tif"))
+    CORRECTION_DATA = scipy.io.loadmat(settings.CORRECTION_DATA)
+    LASER_CORRECTION_DATA = scipy.io.loadmat(settings.LASER_CORRECTION_DATA)
+    excitation_efficiency = LASER_CORRECTION_DATA['excitation_efficiency']
+
+    # Laser power normalization
+    laser_power_at_sample = np.array([0.022, 0.115, 0.263, 0.285])
+    laser_power = laser_power_at_sample / np.max(laser_power_at_sample)  # Normalize laser powers
+
+    POWELL_SPL_MASK_FF_norm = CORRECTION_DATA['POWELL_SPL_MASK_FF_norm']
+    Flch = LASER_CORRECTION_DATA['Flch']
+    Flch_rel = Flch.copy()
+    Flch_rel = Flch_rel / np.sum(Flch_rel, axis=1, keepdims=True)
+
+    # 1. Multiply the laser pattern by laser intensity
+    laser_correction_SP = laser_power[:, np.newaxis, np.newaxis, np.newaxis] * POWELL_SPL_MASK_FF_norm
+    sLCSp = laser_correction_SP.shape
+
+    # 2. Reshape correction matrix to a 2d matrix: (lasers) x (channels x z x y) a
+    # and matrix multiply by the the excitation matrix
+    # you're computing how much each laser's pattern contributes to each of the color fluors
+    # output is a 5 x (ch x z x y) matrix
+    laser_correction_ch_SP = np.dot(
+        excitation_efficiency,
+        laser_correction_SP.reshape(sLCSp[0], sLCSp[1] * sLCSp[2] * sLCSp[3])
+    )  # Equivalent to excitation_efficiency(:,:) * reshape(Laser_correction_SP, [sLCSp(1), sLCSp(2)*sLCSp(3)*sLCSp(4)])
+
+    # 3. Matrix multiply by the fluorescence matrix(except the first column)
+    # you're computing how much of the laser pattern comes from which fluor (see comment)
+    # output is a 4 x (ch x z x y) 2d matrix (that's why we need the np.newaxis)
+    laser_correction_ch_SP = np.dot(Flch_rel[:, 1:].T, laser_correction_ch_SP)  # Flch is fl x ch
+
+    # 4. Reshape back to a 3d matrix fluors x channels x z x y and sum across the fluors
+    laser_correction_ch_SP = laser_correction_ch_SP.reshape(4, sLCSp[1], sLCSp[2], sLCSp[3])
+    laser_correction_ch_SP = np.sum(laser_correction_ch_SP, axis=0)
+
+    # 5. Normalize the result and divide elemnt-wise, resulting shape should be (ch x z x y)
+    max_values = np.max(np.max(laser_correction_ch_SP[:, 100:-100, 100:-100], axis=1), axis=1)
+    laser_correction_ch_SP = laser_correction_ch_SP / max_values[:, np.newaxis, np.newaxis]
+    corrected_data = data / (laser_correction_ch_SP[:, np.newaxis, :, :] + 0.001)
+    min_val = corrected_data.min()
+    max_val = corrected_data.max()
+    corrected_data = (corrected_data - min_val) / (max_val - min_val)
+    corrected_data = corrected_data * 65535
+
+    tifffile.imwrite(os.path.join(output_location, 'laser_corrected.tif'), np.round(corrected_data).astype('uint16'))
 
 
 def laser_correction_byInverse(m):  # tbd whether needs to be processed separately
@@ -244,7 +336,7 @@ def preprocess_nuclei(spool_file, location):
         os.makedirs(laser_corrected_location)
     except:
         pass
-    laser_correction(bg_subtracted_location, laser_corrected_location)
+    laser_correction_nuclei(bg_subtracted_location, laser_corrected_location)
     preprocessed_location = laser_corrected_location
     return preprocessed_location
 
@@ -271,7 +363,7 @@ def preprocess_colors(spool_file, location):
         os.makedirs(laser_corrected_location)
     except:
         pass
-    laser_correction(color_split_location, laser_corrected_location)
+    laser_correction_colors(color_split_location, laser_corrected_location)
 
     return
 

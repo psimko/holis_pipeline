@@ -110,8 +110,8 @@ def main():
     print("Preprocessing data")
     NUCLEI_DIR = preprocess_nuclei(NUCLEI_FLI, NUCLEI_DIR)
     print("Preprocessed nuclei")
-    # COLORS_DIR = preprocess_colors(COLORS_FLI, COLORS_DIR)  # TODO separate task
-    # print("Preprocessed colors")
+    COLORS_DIR = preprocess_colors(COLORS_FLI, COLORS_DIR)  # TODO separate task
+    print("Preprocessed colors")
 
     # output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')  # TODO: do we need scale? Will it always be full resolution?
     #
