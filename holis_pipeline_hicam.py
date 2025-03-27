@@ -72,6 +72,9 @@ NUCLEI_FLI = sys.argv[1]
 # COLORS_FLI = sys.argv[2]
 OUTPUT_DIR = sys.argv[2]
 
+if not os.path.exists(OUTPUT_DIR):
+    os.makedirs(OUTPUT_DIR)
+
 COLORS_FLI = NUCLEI_FLI.replace('272.fli', '088.fli')
 
 work_dir = os.getcwd()
