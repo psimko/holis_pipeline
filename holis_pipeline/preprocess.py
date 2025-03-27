@@ -25,6 +25,7 @@ def subtract_background(input_location, output_location, bg_file_name):
     print("reading zarr")
     image_dask_zarray = read_omehans(input_location)
     image_np_array = image_dask_zarray.compute()
+    tifffile.imwrite(os.path.join(output_location, "original.tif"), image_np_array.astype('uint16'))
     print("Reading BG file")
     BG_FOLDER = read_fli_as_zarr(bg_file_name, os.path.join(os.path.dirname(bg_file_name), os.path.basename(bg_file_name).replace('.fli', '')))
     bg_dask_zarray = read_omehans(BG_FOLDER)
