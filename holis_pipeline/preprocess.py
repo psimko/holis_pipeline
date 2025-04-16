@@ -537,10 +537,14 @@ def preprocess_colors(spool_file, location):
     return preprocessed_location
 
 
+###############################################
+## Unmixing
+###############################################
+
+###############################################
+# NNLS - no GPU
+
 def unmix_data():
-    ###############################################
-    ## NNLS method
-    ###############################################
 
     # c (stands for corrected) is a list (length of channels) of images, e.g. c=[c_nuc, c_ch1, ...]
     ss = c.shape
@@ -555,3 +559,82 @@ def unmix_data():
         # spectral_data_unmixed[:, i] *= 2**10
     # Reshape back to original dimensions
     spectral_data_unmixed = spectral_data_unmixed.reshape(Flch_rel.shape[1], ss[1], ss[2])
+
+###############################################
+# NNLS - with GPU
+
+import torch
+import pickle
+import numpy as np
+from tqdm import tqdm
+import scipy.io as sio
+from scipy.io import loadmat
+from numpy.linalg import inv
+
+# ---------- Load input ----------
+# c should be of shape (ch, z, y, x)
+c = np.load("array_to_unmix.npy", allow_pickle=True)
+
+# Fluorophore x Channel matrix normalization
+Flch = laser_correction_data['Flch']
+Flch_rel = Flch.copy()
+
+# Normalize along columns - so each entry (i,j) is the percentage of the signal in channel j coming from fluorophore i
+Flch_rel = Flch_rel / np.sum(Flch_rel, axis=1, keepdims=True)
+Flch_rel = np.array(Flch_rel)
+
+assert Flch_rel.shape[1] == c.shape[0], "Channel count mismatch!"
+
+# ---------- Setup ----------
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Unmixing running on {device}")
+
+A = torch.tensor(Flch_rel, dtype=torch.float32, device=device)  # shape: (C, S)
+
+# bias_column = torch.ones((Flch_rel.shape[0], 1), dtype=torch.float32)
+# A_augmented = np.concatenate([Flch_rel, bias_column.numpy()], axis=1)
+# A = torch.tensor(A_augmented, dtype=torch.float32, device=device)
+
+AtA = A.T @ A
+AtA_inv = torch.linalg.pinv(AtA)
+At = A.T
+
+# Preprocess data
+C_np = c.reshape(c.shape[0], -1).T  # shape: (pixels, C)
+C = torch.tensor(C_np, dtype=torch.float32, device=device)  # shape: (N, C)
+
+# ---------- Batched NNLS via projection ----------
+def nnls_torch(A, C, max_iter=500, lr=1e-2):
+    """
+    Solve NNLS: minimize ||Ax - b||^2 s.t. x >= 0 using projected gradient descent
+    A: (C, F), C: (N, C) where N is the number of pixels, C is the number of channels and F is the number of fluors
+    Returns: X: (N, F)
+    """
+    N, C_dim = C.shape
+    F = A.shape[1]
+    X = torch.zeros((N, F), device=device, dtype=torch.float32, requires_grad=True)
+    optimizer = torch.optim.SGD([X], lr=lr)
+
+    for _ in range(max_iter):
+        optimizer.zero_grad()
+        pred = C @ A.T - X @ AtA.T  # Equivalent to A @ X.T - C.T
+        loss = torch.sum(pred**2)
+        loss.backward()
+        optimizer.step()
+        with torch.no_grad():
+            X.clamp_(min=0)  # enforce non-negativity
+    return X.detach()
+
+print("Running GPU NNLS...")
+X_unmixed = nnls_torch(A, C, max_iter=100, lr=1e-2)  # shape: (pixels, sources)
+
+# Reshape and save
+S = Flch_rel.shape[1] # add 1 to shape if you're using bias
+X_unmixed_np = X_unmixed.cpu().numpy().T.reshape(S, *c.shape[1:])
+
+return X_unmixed_np
+
+#with open("spectral_data_unmixed_test.pkl", "wb") as f:
+#    pickle.dump(X_unmixed_np, f)
+
+#print("Saved: spectral_data_unmixed_test.pkl")
