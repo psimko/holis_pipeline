@@ -5,14 +5,15 @@ import dask.array as da
 import numpy as np
 import scipy
 import tifffile
+import sys
+from skimage import io, img_as_float32, img_as_float, img_as_uint
 
 from holis_pipeline import settings
 from holis_pipeline.preprocessing_functions import read_data_file
 from holis_pipeline.read_data import read_fli_as_zarr
-from holis_pipeline.utils.zarr_related import read_omehans
+from holis_pipeline.utils.zarr_related import read_omehans, write_omehans
 
 
-# def subtract_background(input_location, output_location):
 def subtract_background(input_location, output_location, bg_file_name):
 
     """
@@ -20,7 +21,9 @@ def subtract_background(input_location, output_location, bg_file_name):
            empty frames (.mat) - the same shape as the data (1 file per nuclei+colors fli pair)
     output: flattened .omehans - same shape as input
     """
-    if os.path.exists(os.path.join(output_location, "bg_subtracted.tif")):
+    print("Subtracting BG...")
+    if os.path.exists(os.path.join(output_location, 'zarr')) and os.path.exists(os.path.join(output_location, "bg_subtracted.tif")):
+        print("BG already subtracted previously")
         return
     print("reading zarr")
     image_dask_zarray = read_omehans(input_location)
@@ -40,12 +43,11 @@ def subtract_background(input_location, output_location, bg_file_name):
     # image_np_array_bgSubtracted = image_dask_zarray_bgSubtracted.compute()
     image_np_array_bgSubtracted = image_np_array.astype('float32') - bg_mask_np[:, :, np.newaxis].astype('float32')
     image_np_array_bgSubtracted[image_np_array_bgSubtracted < 0] = 0
-    tifffile.imwrite(os.path.join(output_location, "bg_subtracted.tif"), image_np_array_bgSubtracted.astype('uint16'))
+    # tifffile.imwrite(os.path.join(output_location, "bg_subtracted.tif"), image_np_array_bgSubtracted.astype('uint16'))
+    write_omehans(os.path.join(output_location, 'zarr'), image_np_array_bgSubtracted.astype('uint16'))
 
     # image_np_array_bgSubtracted = image_np_array.astype('float32') - bg_array.astype('float32')
     # image_np_array_bgSubtracted[image_np_array_bgSubtracted < 0] = 0
-    # print("RAW - BG min", image_np_array_bgSubtracted.min())
-    # print("RAW - BG max", image_np_array_bgSubtracted.max())
     # tifffile.imwrite(os.path.join(output_location, "raw_minus_bg.tif"), image_np_array_bgSubtracted.astype('uint16'))
     print("Saved BG-subtracted file")
 
@@ -54,7 +56,15 @@ def split_color_channels(input_location, output_location):
     """
     Takes a 3D image splitter data and outputs a 4D array with shape (ch, z, y, x).
     """
-    data_temp = tifffile.imread(os.path.join(input_location, "bg_subtracted.tif"))
+    print("Splitting color channels...")
+    if os.path.exists(os.path.join(output_location, 'zarr')) and os.path.exists(os.path.join(output_location, "color_split.tif")):
+        print("Colors already split previously")
+        return
+    print("Reading data...")
+    # data_temp = tifffile.imread(os.path.join(input_location, "bg_subtracted.tif"))
+    data_temp_zarray = read_omehans(os.path.join(input_location, "zarr"))
+    data_temp = data_temp_zarray.compute()
+    print("Calculating split...")
     ss = data_temp.shape
 
     # Define four channel regions by splitting along y and x axes
@@ -67,23 +77,16 @@ def split_color_channels(input_location, output_location):
     temp_ch2 = data_temp[:, :ss[1]//2, ss[2]//2:]
     temp_ch3 = data_temp[:, ss[1]//2:, :ss[2]//2]
     temp_ch4 = data_temp[:, ss[1]//2:, ss[2]//2:]
-    
-    print(temp_ch1.shape)
-    print(temp_ch2.shape)
-    print(temp_ch3.shape)
-    print(temp_ch4.shape)
 
     # Optional offsets for each channel (if needed)
     y = np.zeros(4, dtype=int)
     # y = da.zeros(4, dtype=int)
     z = np.zeros(4, dtype=int)
     # z = da.zeros(4, dtype=int)
-    print(y)
-    print(z)
 
-    # Crop ranges for each channel
-    cropY = 640
-    cropZ = 512
+    # # Crop ranges for each channel
+    # cropY = 640
+    # cropZ = 512
 
     # Apply cropping to each channel
     # temp_ch1 = temp_ch1[z[0]:z[0] + cropZ, y[0]:y[0] + cropY, :]
@@ -91,18 +94,15 @@ def split_color_channels(input_location, output_location):
     # temp_ch3 = temp_ch3[z[2]:z[2] + cropZ, y[2]:y[2] + cropY, :]
     # temp_ch4 = temp_ch4[z[3]:z[3] + cropZ, y[3]:y[3] + cropY, :]
     
-    # print(temp_ch1.shape)
-    # print(temp_ch2.shape)
-    # print(temp_ch3.shape)
-    # print(temp_ch4.shape)
-
     # Stack channels along a new axis and permute to shape (ch, z, y, x)
     #data_temp = np.stack([temp_ch1, temp_ch2, temp_ch3, temp_ch4], axis=0)
     #data_temp = da.concatenate([temp_ch1[ :, :, :], temp_ch2[ :, :, :], temp_ch3[ :, :, :], temp_ch4[ :, :, :]], axis=0)
     # data_temp = da.concatenate([temp_ch1[None, :, :, :], temp_ch2[None, :, :, :], temp_ch3[None, :, :, :], temp_ch4[None, :, :, :]], axis=0)
     data_temp = np.concatenate([temp_ch1[None, :, :, :], temp_ch2[None, :, :, :], temp_ch3[None, :, :, :], temp_ch4[None, :, :, :]], axis=0)
-    print("data_temp shape", data_temp.shape)
-    tifffile.imwrite(os.path.join(output_location, "color_split.tif"), data_temp)
+
+    print("Saving data...")
+    # tifffile.imwrite(os.path.join(output_location, "color_split.tif"), data_temp)
+    write_omehans(os.path.join(output_location, "zarr"), data_temp.astype('uint16'))
 
 
 def laser_correction_nuclei(input_location, output_location):
@@ -314,14 +314,175 @@ def laser_correction_byInverse(m):  # tbd whether needs to be processed separate
     return m_corr
 
 
-def color_registration(input_location, output_location):
+def color_nuclei_registration(input_location, output_location):
     """
-    input: 4-channel corrected colors .omehans
+    input:
+        - 4-channel corrected colors .omehans
+        - 1-channel corrected nuclei .omehans
     output:
         - 4-channel corrected colors registered to nuclei space
         - 4 affine matrices (for each color)
     """
-    pass
+    print("Registering...")
+
+    from skimage import exposure
+    from skimage.exposure import match_histograms
+
+    def equalize(img):
+        img = (img - img.min()) / (img.max() - img.min())
+        img = exposure.equalize_adapthist(img)
+        return img
+
+    def match(moving_image, fixed_image):
+        matched_img = match_histograms(moving_image, fixed_image)
+        return matched_img
+
+    def sitk_align_translation(fixed, moving, output_offsets=False):
+        '''
+        Input:
+            fixed: numpy array (same shape as moving)
+            moving: numpy array (same shape as fixed)
+
+        Output:
+            If output_offsets == False (default), an aligned image is returned
+            If output_offsets == True, a tuple of pixel offsets is returned
+
+            Images are returned in the same dtype as input
+        '''
+        import SimpleITK as sitk
+
+        dtype = moving.dtype
+        # Convert numpy arrays to sitk images
+        if fixed.dtype != float:
+            fixed = img_as_float32(fixed)
+        if moving.dtype != float:
+            moving = img_as_float32(moving)
+        fixed = sitk.GetImageFromArray(fixed)
+        moving = sitk.GetImageFromArray(moving)
+        fixed.SetOrigin((0, 0))
+        moving.SetOrigin((0, 0))
+
+        # Calculate alignment
+        R = sitk.ImageRegistrationMethod()
+        R.SetMetricAsMattesMutualInformation()
+        R.SetOptimizerAsRegularStepGradientDescent(1.0, 0.01, 200)
+        R.SetInitialTransform(sitk.TranslationTransform(fixed.GetDimension()))
+        R.SetInterpolator(sitk.sitkLinear)
+
+        # Pyramidal registration
+        R.SetShrinkFactorsPerLevel([6, 2, 1])
+        R.SetSmoothingSigmasPerLevel([6, 2, 1])
+
+        outTx = R.Execute(fixed, moving)
+        # return outTx
+        if output_offsets:
+            # Return revered tuple of pixel offsets (sitk and numpy axes are reversed)
+            # Returned axes are in order (y,x)
+            offsets = outTx.GetParameters()[::-1]
+            # invert offsets
+            return tuple([-x for x in offsets])
+
+        # Produce aligned image
+        resampler = sitk.ResampleImageFilter()
+        resampler.SetReferenceImage(fixed)
+        R.SetInterpolator(sitk.sitkLinear)
+        resampler.SetDefaultPixelValue(0)
+        resampler.SetTransform(outTx)
+        out = resampler.Execute(moving)
+
+        # Return numpy array of aligned image
+        out = sitk.GetArrayFromImage(out)
+        if dtype == out.dtype:
+            return out
+        if dtype == np.dtype('uint16'):
+            return img_as_uint(out)
+        if dtype == np.dtype('float32'):
+            return img_as_float32(out)
+        if dtype == float:
+            return img_as_float(out)
+
+    def calculate_channels_shift(multi_channel_z_stack, reference_channel=None):
+        from skimage.registration import phase_cross_correlation
+        from skimage.metrics import normalized_mutual_information
+
+        if reference_channel is None:
+            reference_channel = 0
+
+        shift_dict = {
+            0: [],
+            1: [],
+            2: [],
+            3: []
+        }
+        nmi_scores = []
+        moving_array = multi_channel_z_stack[2]  # channel 2 vs channel 0
+        ref_array = multi_channel_z_stack[reference_channel]
+        for z_idx in range(moving_array.shape[0]):
+            print("Calculating mutual information", z_idx)
+            reference = ref_array[z_idx].copy()
+            moving = moving_array[z_idx].copy()
+            nmi = normalized_mutual_information(reference, moving)
+            nmi_scores.append(nmi)
+        nmi_scores = np.array(nmi_scores)
+        threshold = np.percentile(nmi_scores, 90)  # top 10% highest NMI
+        top_10_percent_indices = np.where(nmi_scores >= threshold)[0]
+
+        for ch_idx in range(multi_channel_z_stack.shape[0]):
+            if ch_idx != reference_channel:
+                moving_array = multi_channel_z_stack[ch_idx].copy()
+                for z_idx in list(top_10_percent_indices):
+                # for z_idx in range(moving_array.shape[0]):
+                    print(f'Getting Reference and Moving images')
+                    reference = ref_array[z_idx].copy()
+                    moving = moving_array[z_idx].copy()
+                    reference = equalize(reference)
+                    moving = equalize(moving)
+                    moving = match(moving, reference)
+                    print(f'Aligning Image {z_idx} of {multi_channel_z_stack.shape[1]}')
+                    shift, error, phasediff = phase_cross_correlation(reference,moving)
+                    # shift = sitk_align_translation(reference, moving, output_offsets=True)
+                    shift_dict[ch_idx].append(shift)
+
+        return shift_dict
+
+    def calculate_channel_shifts(data_array, anchor_channel=0):
+        '''
+        This function takes a 4 channels image and aligns the channels relative to one of the 4 channel (anchor_channel)
+        then calculates the translational shift required to overlay them.
+
+        This version of the function uses a geometric mean to calculate the shifts
+        '''
+        shift_dict = calculate_channels_shift(data_array, reference_channel=anchor_channel)
+
+        shift_medians = {
+            0: (0, 0),
+            1: None,
+            2: None,
+            3: None
+        }
+
+        for channel in range(1, 4):
+            shift_medians[channel] = int(round(np.median(np.array(shift_dict[channel])[:, 0]))), int(round(np.median(np.array(shift_dict[channel])[:, 1])))
+
+        return shift_medians
+
+    print("Reading data...")
+    # data_array = tifffile.imread(os.path.join(input_location, "color_split.tif"))
+    data_zarray = read_omehans(os.path.join(input_location, "zarr"))
+    data_array = data_zarray.compute()
+    print("Calculating alignment...")
+    shifts = calculate_channel_shifts(data_array)
+    print("Shifts", shifts)
+    shifted_array = np.zeros_like(data_array)
+    shifted_array[0, :, :, :] = data_array[0, :, :, :].copy()
+    for channel in range(1, 4):
+        channel_data = data_array[channel, :, :, :].copy()
+        channel_shifts = shifts[channel]
+        channel_data[:] = np.roll(channel_data, channel_shifts[0], axis=1)
+        channel_data[:] = np.roll(channel_data, channel_shifts[1], axis=2)
+        shifted_array[channel, :, :, :] = channel_data.copy()
+    tifffile.imwrite(os.path.join(output_location, "color_registered.tif"), shifted_array.astype('uint16'))
+    write_omehans(os.path.join(output_location, "zarr"), shifted_array.astype('uint16'))
 
 
 def preprocess_nuclei(spool_file, location):
@@ -358,21 +519,39 @@ def preprocess_colors(spool_file, location):
     # color_data_zyx = np.transpose(color_data, (1, 2, 0)) I think the splitter data needs to be transposed like
     split_color_channels(bg_subtracted_location, color_split_location)
 
-    laser_corrected_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_laser_corrected")
-
-    try:
-        os.makedirs(laser_corrected_location)
-    except:
-        pass
-    laser_correction_colors(color_split_location, laser_corrected_location)
-
-    return
+    # laser_corrected_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_laser_corrected")
+    #
+    # try:
+    #     os.makedirs(laser_corrected_location)
+    # except:
+    #     pass
+    # laser_correction_colors(color_split_location, laser_corrected_location)
 
     color_registered_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_color_registered")
     try:
         os.makedirs(color_registered_location)
     except:
         pass
-    color_registration(laser_corrected_location, color_registered_location)
+    color_nuclei_registration(color_split_location, color_registered_location)
     preprocessed_location = color_registered_location
     return preprocessed_location
+
+
+def unmix_data():
+    ###############################################
+    ## NNLS method
+    ###############################################
+
+    # c (stands for corrected) is a list (length of channels) of images, e.g. c=[c_nuc, c_ch1, ...]
+    ss = c.shape
+    c_reshaped = c.reshape(ss[0], ss[1] * ss[2])
+
+    # Preallocate output array
+    spectral_data_unmixed = np.zeros((Flch_rel.shape[1], ss[1] * ss[2]))
+
+    # Solve NNLS for each pixel
+    for i in range(c_reshaped.shape[1]):  # Iterate over flattened pixels
+        spectral_data_unmixed[:, i], _ = nnls(Flch_rel, c_reshaped[:, i])  # NNLS ensures non-negativity
+        # spectral_data_unmixed[:, i] *= 2**10
+    # Reshape back to original dimensions
+    spectral_data_unmixed = spectral_data_unmixed.reshape(Flch_rel.shape[1], ss[1], ss[2])
