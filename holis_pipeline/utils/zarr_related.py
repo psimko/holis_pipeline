@@ -15,6 +15,7 @@ def read_omehans(path_to_omehans, scale=None):
 
 
 def write_omehans(path_to_omehans, numpy_data):
+    print("Saving .omehans array")
     if not os.path.exists(path_to_omehans):
         os.makedirs(path_to_omehans)
     store = H5_Nested_Store(path_to_omehans, "a")
@@ -33,3 +34,16 @@ def write_omehans(path_to_omehans, numpy_data):
     elif numpy_data.ndim == 4:
         for c in range(numpy_data.shape[0]):
             array[c, :, :, :] = numpy_data[c, :, :, :]
+
+
+def write_zarr(path_to_zarr, numpy_data):
+    print("Saving .zarr array")
+    if not os.path.exists(path_to_zarr):
+        os.makedirs(path_to_zarr)
+    if numpy_data.ndim == 3:
+        chunks = (128, 128, 128)
+    elif numpy_data.ndim == 4:
+        chunks = (1, 128, 128, 128)
+    compressor = zarr.Blosc(cname='zstd', clevel=3)
+    z = zarr.open(os.path.join(path_to_zarr, 'array.zarr'), mode='w', shape=numpy_data.shape, dtype=numpy_data.dtype, chunks=chunks, compressor=compressor)
+    z[:] = numpy_data

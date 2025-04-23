@@ -58,7 +58,7 @@ from holis_pipeline.chunk_data import chunk_data
 from holis_pipeline.read_data import read_fli_as_zarr
 from holis_pipeline.detect_nuclei import detect_cells_deepblink_slurm
 from holis_pipeline.utils.create_masks import get_chunks_with_bright_signal, get_chunks_with_background
-from holis_pipeline.preprocess import preprocess_nuclei, preprocess_colors
+from holis_pipeline.preprocess import preprocess_nuclei, preprocess_colors, unmix_data, nuclei_color_registration
 from holis_pipeline.utils.create_folders import create_folders
 from holis_pipeline.unchunk_data import combine_masks, remove_chunking_artifacts, extract_coords
 from holis_pipeline.extract_spectral_info import get_spectral_info
@@ -115,6 +115,10 @@ def main():
     print("Preprocessed nuclei")
     COLORS_DIR = preprocess_colors(COLORS_FLI, COLORS_DIR)  # TODO separate task
     print("Preprocessed colors")
+    REGISTERED_DIR = os.path.join(OUTPUT_DIR, f"{os.path.basename(NUCLEI_FLI).replace('272.fli', '')}_nuclei_colors_registered")
+    nuclei_color_registration(NUCLEI_DIR, COLORS_DIR, REGISTERED_DIR)
+
+    # unmix_data()
 
     # output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')  # TODO: do we need scale? Will it always be full resolution?
     #

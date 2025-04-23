@@ -22,7 +22,8 @@ FOREGROUND_MASK = '/bil/proj/rf1hillman/results/2023_08_15_combinatorialSlides2_
 
 
 # Pre-processing
-EMPTY_FRAMES_FILE_NAME_FORMAT = "wholeScanBG-*"  # background (empty) scans
+EMPTY_FRAMES_FILE_NAME_FORMAT = "DarkFrames-*"  # background (empty) scans
+# EMPTY_FRAMES_FILE_NAME_FORMAT = "wholeScanBG-*"  # background (empty) scans
 LASER_PATTERN_MATRIX = ""  # text file location
 ABSORPTION_MATRIX = ""  # text file location
 MIXING_MATRIX = ""  # text file location

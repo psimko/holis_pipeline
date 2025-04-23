@@ -7,11 +7,12 @@ import scipy
 import tifffile
 import sys
 from skimage import io, img_as_float32, img_as_float, img_as_uint
+from skimage.transform import resize
 
 from holis_pipeline import settings
 from holis_pipeline.preprocessing_functions import read_data_file
 from holis_pipeline.read_data import read_fli_as_zarr
-from holis_pipeline.utils.zarr_related import read_omehans, write_omehans
+from holis_pipeline.utils.zarr_related import read_omehans, write_omehans, write_zarr
 
 
 def subtract_background(input_location, output_location, bg_file_name):
@@ -22,13 +23,14 @@ def subtract_background(input_location, output_location, bg_file_name):
     output: flattened .omehans - same shape as input
     """
     print("Subtracting BG...")
-    if os.path.exists(os.path.join(output_location, 'zarr')) and os.path.exists(os.path.join(output_location, "bg_subtracted.tif")):
+    if os.path.exists(os.path.join(output_location, 'omehans', '0', '0', '0')) and os.path.exists(os.path.join(output_location, "bg_subtracted.tif")):
         print("BG already subtracted previously")
-        return
-    print("reading zarr")
+        # return
+    print("reading omehans")
     image_dask_zarray = read_omehans(input_location)
     image_np_array = image_dask_zarray.compute()
-    tifffile.imwrite(os.path.join(output_location, "original.tif"), image_np_array.astype('uint16'))
+    # tifffile.imwrite(os.path.join(output_location, "original.tif"), image_np_array.astype('uint16'))
+    write_zarr(os.path.join(output_location, 'original_zarr'), image_np_array.astype('uint16'))
     print("Reading BG file")
     BG_FOLDER = read_fli_as_zarr(bg_file_name, os.path.join(os.path.dirname(bg_file_name), os.path.basename(bg_file_name).replace('.fli', '')))
     bg_dask_zarray = read_omehans(BG_FOLDER)
@@ -44,7 +46,8 @@ def subtract_background(input_location, output_location, bg_file_name):
     image_np_array_bgSubtracted = image_np_array.astype('float32') - bg_mask_np[:, :, np.newaxis].astype('float32')
     image_np_array_bgSubtracted[image_np_array_bgSubtracted < 0] = 0
     # tifffile.imwrite(os.path.join(output_location, "bg_subtracted.tif"), image_np_array_bgSubtracted.astype('uint16'))
-    write_omehans(os.path.join(output_location, 'zarr'), image_np_array_bgSubtracted.astype('uint16'))
+    write_omehans(os.path.join(output_location, 'omehans'), image_np_array_bgSubtracted.astype('uint16'))
+    write_zarr(os.path.join(output_location, 'zarr'), image_np_array_bgSubtracted.astype('uint16'))
 
     # image_np_array_bgSubtracted = image_np_array.astype('float32') - bg_array.astype('float32')
     # image_np_array_bgSubtracted[image_np_array_bgSubtracted < 0] = 0
@@ -62,7 +65,7 @@ def split_color_channels(input_location, output_location):
         return
     print("Reading data...")
     # data_temp = tifffile.imread(os.path.join(input_location, "bg_subtracted.tif"))
-    data_temp_zarray = read_omehans(os.path.join(input_location, "zarr"))
+    data_temp_zarray = read_omehans(os.path.join(input_location, "omehans"))
     data_temp = data_temp_zarray.compute()
     print("Calculating split...")
     ss = data_temp.shape
@@ -102,7 +105,8 @@ def split_color_channels(input_location, output_location):
 
     print("Saving data...")
     # tifffile.imwrite(os.path.join(output_location, "color_split.tif"), data_temp)
-    write_omehans(os.path.join(output_location, "zarr"), data_temp.astype('uint16'))
+    write_omehans(os.path.join(output_location, "omehans"), data_temp.astype('uint16'))
+    write_zarr(os.path.join(output_location, "zarr"), data_temp.astype('uint16'))
 
 
 def laser_correction_nuclei(input_location, output_location):
@@ -314,7 +318,7 @@ def laser_correction_byInverse(m):  # tbd whether needs to be processed separate
     return m_corr
 
 
-def color_nuclei_registration(input_location, output_location):
+def color_registration(input_location, output_location):
     """
     input:
         - 4-channel corrected colors .omehans
@@ -468,7 +472,7 @@ def color_nuclei_registration(input_location, output_location):
 
     print("Reading data...")
     # data_array = tifffile.imread(os.path.join(input_location, "color_split.tif"))
-    data_zarray = read_omehans(os.path.join(input_location, "zarr"))
+    data_zarray = read_omehans(os.path.join(input_location, "omehans"))
     data_array = data_zarray.compute()
     print("Calculating alignment...")
     shifts = calculate_channel_shifts(data_array)
@@ -485,6 +489,173 @@ def color_nuclei_registration(input_location, output_location):
     write_omehans(os.path.join(output_location, "zarr"), shifted_array.astype('uint16'))
 
 
+def nuclei_color_registration(input_nuclei_location, input_color_location, output_location):
+    """
+    input:
+        - 4-channel corrected colors .omehans
+        - 1-channel corrected nuclei .omehans
+    output:
+        - 4-channel corrected colors registered to nuclei space
+        - 4 affine matrices (for each color)
+    """
+    print("Registering...")
+
+    from skimage import exposure
+
+    def equalize(img):
+        img = (img - img.min()) / (img.max() - img.min())
+        img = exposure.equalize_adapthist(img)
+        return img
+
+    def match(moving_image, fixed_image):
+        matched_img = exposure.match_histograms(moving_image, fixed_image)
+        return matched_img
+
+    def calculate_channels_shift(multi_channel_z_stack, reference_channel=None):
+        print('multi_channel_z_stack', multi_channel_z_stack.shape)
+        from skimage.registration import phase_cross_correlation
+        from skimage.metrics import normalized_mutual_information
+
+        if reference_channel is None:
+            reference_channel = 0
+
+        shift_dict = {
+            0: [],
+            1: [],
+            2: [],
+            3: [],
+            4: []
+        }
+        nmi_scores = []
+        moving_array = multi_channel_z_stack[4]  # channel 4 vs channel 0
+        ref_array = multi_channel_z_stack[reference_channel]
+        for z_idx in range(moving_array.shape[0]):
+            print("Calculating mutual information", z_idx)
+            reference = ref_array[z_idx].copy()
+            moving = moving_array[z_idx].copy()
+            nmi = normalized_mutual_information(reference, moving)
+            nmi_scores.append(nmi)
+        nmi_scores = np.array(nmi_scores)
+        threshold = np.percentile(nmi_scores, 90)  # top 10% highest NMI
+        top_10_percent_indices = np.where(nmi_scores >= threshold)[0]
+
+        for ch_idx in range(multi_channel_z_stack.shape[0]):
+            if ch_idx != reference_channel:
+                moving_array = multi_channel_z_stack[ch_idx].copy()
+                for z_idx in list(top_10_percent_indices):
+                # for z_idx in range(moving_array.shape[0]):
+                    print(f'Getting Reference and Moving images')
+                    reference = ref_array[z_idx].copy()
+                    moving = moving_array[z_idx].copy()
+                    reference = equalize(reference)
+                    moving = equalize(moving)
+                    moving = match(moving, reference)
+                    print(f'Aligning Image {z_idx} of {multi_channel_z_stack.shape[1]}')
+                    shift, error, phasediff = phase_cross_correlation(reference,moving)
+                    # shift = sitk_align_translation(reference, moving, output_offsets=True)
+                    shift_dict[ch_idx].append(shift)
+
+        return shift_dict
+
+    def calculate_channel_shifts(data_array, anchor_channel=0):
+        '''
+        This function takes a 4 channels image and aligns the channels relative to one of the 4 channel (anchor_channel)
+        then calculates the translational shift required to overlay them.
+
+        This version of the function uses a geometric mean to calculate the shifts
+        '''
+        print("Data array", data_array.shape[0])
+        shift_dict = calculate_channels_shift(data_array, reference_channel=anchor_channel)
+
+        shift_medians = {
+            0: (0, 0),
+            1: None,
+            2: None,
+            3: None,
+            4: None
+        }
+
+        for channel in range(1, data_array.shape[0]):
+            shift_medians[channel] = int(round(np.median(np.array(shift_dict[channel])[:, 0]))), int(round(np.median(np.array(shift_dict[channel])[:, 1])))
+
+        return shift_medians
+
+    if not os.path.exists(output_location):
+        os.makedirs(output_location)
+
+    import dask
+    import numpy as np
+    import dask.array as da
+    from skimage.transform import resize
+    from skimage.util import img_as_uint
+    from dask import delayed, compute
+
+    print("Reading data...")
+    # data_array = tifffile.imread(os.path.join(input_location, "color_split.tif"))
+    print("Reading nuclei")
+    nuclei_data_zarray = read_omehans(os.path.join(input_nuclei_location, "omehans"))
+    nuclei_data_array = nuclei_data_zarray.compute()
+    print("Reading colors")
+    color_data_zarray = read_omehans(os.path.join(input_color_location, "omehans"))
+    color_data_array = color_data_zarray.compute()
+    print("Resizing nuclei")
+    # resized_nuclei_data_array = resize(nuclei_data_array, (1, color_data_array.shape[1], color_data_array.shape[2], color_data_array.shape[3]), anti_aliasing=True)
+    # resized_nuclei_data_array = np.empty(color_data_array.shape[1:], color_data_array.dtype)
+    # print("resized_nuclei_data_array", resized_nuclei_data_array.shape)
+
+    # for x in range(nuclei_data_array.shape[0]):
+    #     print("resizing", x)
+    #     frame = nuclei_data_array[x, :, :]
+    #     resized_frame = resize(frame, (color_data_array.shape[2], color_data_array.shape[3]), anti_aliasing=True)
+    #     resized_nuclei_data_array[x, :, :] = img_as_uint(resized_frame)
+
+    # Assume nuclei_data_array and color_data_array are already loaded NumPy arrays
+    shape_y, shape_x = color_data_array.shape[2], color_data_array.shape[3]
+
+    @delayed
+    def process_frame(frame):
+        resized = resize(frame, (shape_y, shape_x), anti_aliasing=True)
+        return img_as_uint(resized)
+
+    # Apply the function to each frame in parallel
+    tasks = [process_frame(nuclei_data_array[x, :, :]) for x in range(nuclei_data_array.shape[0])]
+
+    # Compute all tasks and stack the result
+    resized_frames = compute(*tasks)
+    resized_nuclei_data_array = np.stack(resized_frames, axis=0)
+    print("resized_nuclei_data_array", resized_nuclei_data_array.shape)
+
+    print("CHanging nuclei dimensions")
+    resized_nuclei_data_array = resized_nuclei_data_array[:, ::-1, ::-1]
+    tifffile.imwrite(os.path.join(output_location, "ch0.tif"), resized_nuclei_data_array.astype('uint16'))
+    tifffile.imwrite(os.path.join(output_location, "ch1.tif"), color_data_array[0,:,:,:].astype('uint16'))
+    tifffile.imwrite(os.path.join(output_location, "ch2.tif"), color_data_array[1,:,:,:].astype('uint16'))
+    tifffile.imwrite(os.path.join(output_location, "ch3.tif"), color_data_array[2,:,:,:].astype('uint16'))
+    tifffile.imwrite(os.path.join(output_location, "ch4.tif"), color_data_array[3,:,:,:].astype('uint16'))
+    resized_nuclei_data_array = resized_nuclei_data_array.reshape((1, resized_nuclei_data_array.shape[0], resized_nuclei_data_array.shape[1], resized_nuclei_data_array.shape[2]))
+    print("resized_nuclei_data_array", resized_nuclei_data_array.shape)
+    print("Concatenating nuclei & colors")
+    data_array = np.concatenate([resized_nuclei_data_array, color_data_array], axis=0)
+    print("data_array", data_array.shape)
+    print("Saving tiff")
+    tifffile.imwrite(os.path.join(output_location, "nuclei_plus_colors.tif"), data_array.astype('uint16'))
+
+    print("Calculating alignment...")
+    shifts = calculate_channel_shifts(data_array)
+    print("Shifts", shifts)
+    shifted_array = np.zeros_like(data_array)
+    shifted_array[0, :, :, :] = data_array[0, :, :, :].copy()
+    for channel in range(1, data_array.shape[0]):
+        channel_data = data_array[channel, :, :, :].copy()
+        channel_shifts = shifts[channel]
+        channel_data[:] = np.roll(channel_data, channel_shifts[0], axis=1)
+        channel_data[:] = np.roll(channel_data, channel_shifts[1], axis=2)
+        shifted_array[channel, :, :, :] = channel_data.copy()
+    # tifffile.imwrite(os.path.join(output_location, "nuclei_color_registered.tif"), shifted_array.astype('uint16'))
+    write_omehans(os.path.join(output_location, "omehans"), shifted_array.astype('uint16'))
+    write_zarr(os.path.join(output_location, "zarr"), shifted_array.astype('uint16'))
+
+
 def preprocess_nuclei(spool_file, location):
     bg_subtracted_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_bg_subtracted")
     try:
@@ -493,13 +664,13 @@ def preprocess_nuclei(spool_file, location):
         pass
     bg_file_name = glob(os.path.join(os.path.dirname(spool_file), f"{settings.EMPTY_FRAMES_FILE_NAME_FORMAT}272.fli"))[0]
     subtract_background(location, bg_subtracted_location, bg_file_name)
-    laser_corrected_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_laser_corrected")
-    try:
-        os.makedirs(laser_corrected_location)
-    except:
-        pass
-    laser_correction_nuclei(bg_subtracted_location, laser_corrected_location)
-    preprocessed_location = laser_corrected_location
+    # laser_corrected_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_laser_corrected")
+    # try:
+    #     os.makedirs(laser_corrected_location)
+    # except:
+    #     pass
+    # laser_correction_nuclei(bg_subtracted_location, laser_corrected_location)
+    preprocessed_location = bg_subtracted_location
     return preprocessed_location
 
 
@@ -527,13 +698,13 @@ def preprocess_colors(spool_file, location):
     #     pass
     # laser_correction_colors(color_split_location, laser_corrected_location)
 
-    color_registered_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_color_registered")
-    try:
-        os.makedirs(color_registered_location)
-    except:
-        pass
-    color_nuclei_registration(color_split_location, color_registered_location)
-    preprocessed_location = color_registered_location
+    # color_registered_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_color_registered")
+    # try:
+    #     os.makedirs(color_registered_location)
+    # except:
+    #     pass
+    # color_registration(color_split_location, color_registered_location)  # register to the first color channel
+    preprocessed_location = color_split_location
     return preprocessed_location
 
 
