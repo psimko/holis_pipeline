@@ -68,6 +68,8 @@ TODO:
 command-line arguments - Inputs (colors, nuclei) and output
 """
 
+os.umask(0o006)
+
 NUCLEI_FLI = sys.argv[1]
 # COLORS_FLI = sys.argv[2]
 OUTPUT_DIR = sys.argv[2]
