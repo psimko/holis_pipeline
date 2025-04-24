@@ -1,13 +1,14 @@
 import os
+import sys
 from glob import glob
 
 import dask.array as da
 import numpy as np
 import scipy
 import tifffile
-import sys
 from skimage import io, img_as_float32, img_as_float, img_as_uint
 from skimage.transform import resize
+import zarr
 
 from holis_pipeline import settings
 from holis_pipeline.preprocessing_functions import read_data_file
@@ -25,16 +26,17 @@ def subtract_background(input_location, output_location, bg_file_name):
     print("Subtracting BG...")
     if os.path.exists(os.path.join(output_location, 'omehans', '0', '0', '0')) and os.path.exists(os.path.join(output_location, "bg_subtracted.tif")):
         print("BG already subtracted previously")
-        # return
+        return
     print("reading omehans")
     image_dask_zarray = read_omehans(input_location)
     image_np_array = image_dask_zarray.compute()
     # tifffile.imwrite(os.path.join(output_location, "original.tif"), image_np_array.astype('uint16'))
     write_zarr(os.path.join(output_location, 'original_zarr'), image_np_array.astype('uint16'))
     print("Reading BG file")
-    BG_FOLDER = read_fli_as_zarr(bg_file_name, os.path.join(os.path.dirname(bg_file_name), os.path.basename(bg_file_name).replace('.fli', '')))
+    BG_FOLDER = read_fli_as_zarr(bg_file_name, os.path.join(os.path.dirname(output_location), os.path.basename(bg_file_name).replace('.fli', '')))
     bg_dask_zarray = read_omehans(BG_FOLDER)
     bg_array = bg_dask_zarray.compute()
+    write_zarr(os.path.join(output_location, 'bg_zarr'), bg_array.astype('uint16'))
     # # Generate background masks
     # bg_mask = da.mean(da.asarray(bg_array, dtype=np.float32), axis=2) - 2**10
     bg_mask_np = np.mean(bg_array.astype('float32'), axis=2).round()
@@ -46,7 +48,10 @@ def subtract_background(input_location, output_location, bg_file_name):
     image_np_array_bgSubtracted = image_np_array.astype('float32') - bg_mask_np[:, :, np.newaxis].astype('float32')
     image_np_array_bgSubtracted[image_np_array_bgSubtracted < 0] = 0
     # tifffile.imwrite(os.path.join(output_location, "bg_subtracted.tif"), image_np_array_bgSubtracted.astype('uint16'))
-    write_omehans(os.path.join(output_location, 'omehans'), image_np_array_bgSubtracted.astype('uint16'))
+    try:
+        write_omehans(os.path.join(output_location, 'omehans'), image_np_array_bgSubtracted.astype('uint16'))
+    except zarr.errors.ContainsArrayError:
+        print(".omehans array already exists")
     write_zarr(os.path.join(output_location, 'zarr'), image_np_array_bgSubtracted.astype('uint16'))
 
     # image_np_array_bgSubtracted = image_np_array.astype('float32') - bg_array.astype('float32')
@@ -105,7 +110,10 @@ def split_color_channels(input_location, output_location):
 
     print("Saving data...")
     # tifffile.imwrite(os.path.join(output_location, "color_split.tif"), data_temp)
-    write_omehans(os.path.join(output_location, "omehans"), data_temp.astype('uint16'))
+    try:
+        write_omehans(os.path.join(output_location, "omehans"), data_temp.astype('uint16'))
+    except zarr.errors.ContainsArrayError:
+        print(".omehans array already exists")
     write_zarr(os.path.join(output_location, "zarr"), data_temp.astype('uint16'))
 
 
@@ -652,7 +660,10 @@ def nuclei_color_registration(input_nuclei_location, input_color_location, outpu
         channel_data[:] = np.roll(channel_data, channel_shifts[1], axis=2)
         shifted_array[channel, :, :, :] = channel_data.copy()
     # tifffile.imwrite(os.path.join(output_location, "nuclei_color_registered.tif"), shifted_array.astype('uint16'))
-    write_omehans(os.path.join(output_location, "omehans"), shifted_array.astype('uint16'))
+    try:
+        write_omehans(os.path.join(output_location, "omehans"), shifted_array.astype('uint16'))
+    except zarr.errors.ContainsArrayError:
+        print(".omehans array already exists")
     write_zarr(os.path.join(output_location, "zarr"), shifted_array.astype('uint16'))
 
 
@@ -734,6 +745,7 @@ def unmix_data():
 # ###############################################
 # # NNLS - with GPU
 
+#
 # import torch
 # import pickle
 # import numpy as np
@@ -774,6 +786,40 @@ def unmix_data():
 # C_np = c.reshape(c.shape[0], -1).T  # shape: (pixels, C)
 # C = torch.tensor(C_np, dtype=torch.float32, device=device)  # shape: (N, C)
 
+#
+# # ---------- Load input ----------
+# # c should be of shape (ch, z, y, x)
+# c = np.load("array_to_unmix.npy", allow_pickle=True)
+#
+# # Fluorophore x Channel matrix normalization
+# Flch = laser_correction_data['Flch']
+# Flch_rel = Flch.copy()
+#
+# # Normalize along columns - so each entry (i,j) is the percentage of the signal in channel j coming from fluorophore i
+# Flch_rel = Flch_rel / np.sum(Flch_rel, axis=1, keepdims=True)
+# Flch_rel = np.array(Flch_rel)
+#
+# assert Flch_rel.shape[1] == c.shape[0], "Channel count mismatch!"
+#
+# # ---------- Setup ----------
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# print(f"Unmixing running on {device}")
+#
+# A = torch.tensor(Flch_rel, dtype=torch.float32, device=device)  # shape: (C, S)
+#
+# # bias_column = torch.ones((Flch_rel.shape[0], 1), dtype=torch.float32)
+# # A_augmented = np.concatenate([Flch_rel, bias_column.numpy()], axis=1)
+# # A = torch.tensor(A_augmented, dtype=torch.float32, device=device)
+#
+# AtA = A.T @ A
+# AtA_inv = torch.linalg.pinv(AtA)
+# At = A.T
+#
+# # Preprocess data
+# C_np = c.reshape(c.shape[0], -1).T  # shape: (pixels, C)
+# C = torch.tensor(C_np, dtype=torch.float32, device=device)  # shape: (N, C)
+#
+
 # # ---------- Batched NNLS via projection ----------
 # def nnls_torch(A, C, max_iter=500, lr=1e-2):
 #     """
@@ -786,6 +832,9 @@ def unmix_data():
 #     X = torch.zeros((N, F), device=device, dtype=torch.float32, requires_grad=True)
 #     optimizer = torch.optim.SGD([X], lr=lr)
 
+
+
+#
 #     for _ in range(max_iter):
 #         optimizer.zero_grad()
 #         pred = C @ A.T - X @ AtA.T  # Equivalent to A @ X.T - C.T
@@ -804,6 +853,16 @@ def unmix_data():
 # X_unmixed_np = X_unmixed.cpu().numpy().T.reshape(S, *c.shape[1:])
 
 # #return X_unmixed_np
+
+#
+# print("Running GPU NNLS...")
+# X_unmixed = nnls_torch(A, C, max_iter=100, lr=1e-2)  # shape: (pixels, sources)
+#
+# # Reshape and save
+# S = Flch_rel.shape[1] # add 1 to shape if you're using bias
+# X_unmixed_np = X_unmixed.cpu().numpy().T.reshape(S, *c.shape[1:])
+#
+# return X_unmixed_np
 
 # #with open("spectral_data_unmixed_test.pkl", "wb") as f:
 # #    pickle.dump(X_unmixed_np, f)
