@@ -29,8 +29,10 @@ log.info(f"START TIME: {tstart}")
 nuclei_channel = 0
 
 output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')
-if not os.path.exists(output_folder_scale):
+try:
     os.makedirs(output_folder_scale)
+except:
+    pass
 
 # extract low-resolution masks for foreground and bright spots
 if not os.path.exists(os.path.join(output_folder_scale, "zero_chunks.npy")):

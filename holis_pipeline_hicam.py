@@ -105,20 +105,20 @@ def main():
     create_folders(OUTPUT_DIR)
 
     # Read data to zarr
-    print("Reading data")
+    log.info("Reading data")
     NUCLEI_DIR = read_fli_as_zarr(NUCLEI_FLI, os.path.join(OUTPUT_DIR, os.path.basename(NUCLEI_FLI)))
-    print("Read nuclei channel")
+    log.info("Read nuclei channel")
     COLORS_DIR = read_fli_as_zarr(COLORS_FLI, os.path.join(OUTPUT_DIR, os.path.basename(COLORS_FLI)))
-    print("Read color channels")
+    log.info("Read color channels")
 
     # Preprocess data
-    print("Preprocessing data")
+    log.info("Preprocessing data")
     NUCLEI_DIR = preprocess_nuclei(NUCLEI_FLI, NUCLEI_DIR)
-    print("Preprocessed nuclei")
+    log.info("Preprocessed nuclei")
     COLORS_DIR = preprocess_colors(COLORS_FLI, COLORS_DIR)  # TODO separate task
-    print("Preprocessed colors")
-    REGISTERED_DIR = os.path.join(OUTPUT_DIR, f"{os.path.basename(NUCLEI_FLI).replace('272.fli', '')}_nuclei_colors_registered")
-    nuclei_color_registration(NUCLEI_DIR, COLORS_DIR, REGISTERED_DIR)
+    log.info("Preprocessed colors")
+    # REGISTERED_DIR = os.path.join(OUTPUT_DIR, f"{os.path.basename(NUCLEI_FLI).replace('272.fli', '')}_nuclei_colors_registered")
+    # nuclei_color_registration(NUCLEI_DIR, COLORS_DIR, REGISTERED_DIR)
 
     # unmix_data()
 

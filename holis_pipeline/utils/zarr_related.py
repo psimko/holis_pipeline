@@ -47,3 +47,22 @@ def write_zarr(path_to_zarr, numpy_data):
     compressor = zarr.Blosc(cname='zstd', clevel=3)
     z = zarr.open(os.path.join(path_to_zarr, 'array.zarr'), mode='w', shape=numpy_data.shape, dtype=numpy_data.dtype, chunks=chunks, compressor=compressor)
     z[:] = numpy_data
+
+
+def write_dask_zarr_compatible_with_napari(output_folder, dask_array):
+    zarr_path = os.path.join(output_folder, 'array.zarr')
+
+    # Use same chunking and compression as your existing method
+    if dask_array.ndim == 3:
+        chunks = (128, 128, 128)
+    elif dask_array.ndim == 4:
+        chunks = (1, 128, 128, 128)
+
+    compressor = Blosc(cname='zstd', clevel=3)
+
+    # Rechunk if necessary to match target
+    dask_array = dask_array.rechunk(chunks)
+
+    # Save directly to nested folder (just like your function)
+    dask_array.to_zarr(zarr_path, component=None, overwrite=False,
+                       compressor=compressor)
