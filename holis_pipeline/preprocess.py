@@ -35,17 +35,18 @@ def subtract_background(input_location, output_location, bg_file_name):
     print("Reading BG file")
     BG_FOLDER = read_fli_as_zarr(bg_file_name, os.path.join(os.path.dirname(output_location), os.path.basename(bg_file_name).replace('.fli', '')))
     bg_dask_zarray = read_omehans(BG_FOLDER)
-    bg_array = bg_dask_zarray.compute()
+    bg_dask_zarray_sample = bg_dask_zarray[15000:18000,:,:]
+    bg_array = bg_dask_zarray_sample.compute()
     write_zarr(os.path.join(output_location, 'bg_zarr'), bg_array.astype('uint16'))
     # # Generate background masks
     # bg_mask = da.mean(da.asarray(bg_array, dtype=np.float32), axis=2) - 2**10
-    bg_mask_np = np.mean(bg_array.astype('float32'), axis=2).round()
+    bg_mask_np = np.mean(bg_array.astype('float32'), axis=0).round()
     print("calculated mean")
     # bg_mask_np = bg_mask.compute()
 
     # image_dask_zarray_bgSubtracted = image_dask_zarray - bg_mask[:, :, np.newaxis]
     # image_np_array_bgSubtracted = image_dask_zarray_bgSubtracted.compute()
-    image_np_array_bgSubtracted = image_np_array.astype('float32') - bg_mask_np[:, :, np.newaxis].astype('float32')
+    image_np_array_bgSubtracted = image_np_array.astype('float32') - bg_mask_np[np.newaxis, :, :].astype('float32')
     image_np_array_bgSubtracted[image_np_array_bgSubtracted < 0] = 0
     # tifffile.imwrite(os.path.join(output_location, "bg_subtracted.tif"), image_np_array_bgSubtracted.astype('uint16'))
     try:
@@ -72,6 +73,9 @@ def split_color_channels(input_location, output_location):
     # data_temp = tifffile.imread(os.path.join(input_location, "bg_subtracted.tif"))
     data_temp_zarray = read_omehans(os.path.join(input_location, "omehans"))
     data_temp = data_temp_zarray.compute()
+
+    data_temp = np.transpose(data_temp, (1, 2, 0)) 
+
     print("Calculating split...")
     ss = data_temp.shape
 
@@ -126,19 +130,29 @@ def laser_correction_nuclei(input_location, output_location):
         - mixing (fluorescence) matrix (n_fluorophores, n_channels) - (5x5) - first column for nuclei
     Output: corrected .omehans the same shape as input
     """
-    data = tifffile.imread(os.path.join(input_location, "bg_subtracted.tif"))
-    CORRECTION_DATA = scipy.io.loadmat(settings.CORRECTION_DATA)
-    LASER_CORRECTION_DATA = scipy.io.loadmat(settings.LASER_CORRECTION_DATA)
-    excitation_efficiency = LASER_CORRECTION_DATA['excitation_efficiency']
+    #data = tifffile.imread(os.path.join(input_location, "bg_subtracted.tif"))
+
+    print("Laser pattern (nuclei channel) correction...")
+    if os.path.exists(os.path.join(output_location, 'omehans', '0', '0', '0')) and os.path.exists(os.path.join(output_location, "laser_corrected.tif")):
+        print("Laser pattern corrected (nuclei channel) previously")
+        return
+    print("reading omehans")
+
+    image_dask_zarray = read_omehans(os.path.join(input_location, "omehans"))
+    image_np_array = image_dask_zarray.compute()
+    CORRECTION_MATRICES = scipy.io.loadmat(settings.CORRECTION_DATA)
+    SIMULATION_MATRICES = scipy.io.loadmat(settings.LASER_CORRECTION_DATA)
+    excitation_efficiency = SIMULATION_MATRICES['excitation_efficiency']
 
     # Laser power normalization
-    laser_power_at_sample = np.array([0.022, 0.115, 0.263, 0.285])
+    #laser_power_at_sample = np.array([0.022, 0.115, 0.263, 0.285])
+    laser_power_at_sample = np.array([0.10, 0.44, 0.40, 1.08]) # First hemibrain slab 6/7
     laser_power = laser_power_at_sample / np.max(laser_power_at_sample)  # Normalize laser powers
 
-    Flch = LASER_CORRECTION_DATA['Flch']
+    Flch = SIMULATION_MATRICES['Flch']
     Flch_rel = Flch.copy()
     Flch_rel = Flch_rel / np.sum(Flch_rel, axis=1, keepdims=True)
-    POWELL_NUC_MASK_FF_norm = CORRECTION_DATA['POWELL_NUC_MASK_FF_norm']
+    POWELL_NUC_MASK_FF_norm = CORRECTION_MATRICES['POWELL_NUC_MASK_FF_norm']
 
     # 1. Multiply the laser pattern by laser intensity
     laser_correction_Nuc = laser_power[:, np.newaxis, np.newaxis] * POWELL_NUC_MASK_FF_norm
@@ -161,30 +175,61 @@ def laser_correction_nuclei(input_location, output_location):
     laser_correction_ch_Nuc = np.sum(laser_correction_ch_Nuc, axis=0)  # Squeeze sum over first axis
 
     # 5. Divide the nuclear channel image by the correction matrix (element-wise)
-    corrected_data = data / (laser_correction_ch_Nuc + 0.001)  # (7500, 1024, 1280) / (1024, 1280)
-    min_val = corrected_data.min()
+    image_np_array = image_np_array.astype('float32')
+
+    """     print(type(image_np_array))
+    print(image_np_array.dtype)
+    print(image_np_array.shape)
+    print(image_np_array)  """
+
+    laser_correction_ch_Nuc = laser_correction_ch_Nuc.astype('float32')
+
+    corrected_data = image_np_array / (laser_correction_ch_Nuc + 1)
+    """     min_val = corrected_data.min()
     max_val = corrected_data.max()
     corrected_data = (corrected_data - min_val) / (max_val - min_val)
-    corrected_data = corrected_data * 65535
+    corrected_data = corrected_data * 65535 """
+
+    image_np_array_laserCorrected = corrected_data.astype('float32')
 
     # Comment: so if we do step 3 I think in step 4 we shouldn't add across fluors but divide in step 5 by laser_correction_ch_Nuc[0]
     # Otherwise, if we are going to sum anyway we don't need step (4) and can just divide by laser_correction_ch_Nuc, because otherwise it seems like we are redistributing a value and then summing it back.
 
-    tifffile.imwrite(os.path.join(output_location, 'laser_corrected.tif'), np.round(corrected_data).astype('uint16'))
+    #tifffile.imwrite(os.path.join(output_location, 'laser_corrected.tif'), np.round(corrected_data).astype('uint16'))
+
+    try:
+        write_omehans(os.path.join(output_location, 'omehans'), image_np_array_laserCorrected.astype('uint16'))
+    except zarr.errors.ContainsArrayError:
+        print(".omehans array already exists")
+    try:
+        write_zarr(os.path.join(output_location, 'zarr'), image_np_array_laserCorrected.astype('uint16'))
+    except zarr.errors.ContainsArrayError:
+        print(".zarr array already exists")
+    print("Saved laser-pattern-corrected file")
+
 
 
 def laser_correction_colors(input_location, output_location):
-    data = tifffile.imread(os.path.join(input_location, "color_split.tif"))
-    CORRECTION_DATA = scipy.io.loadmat(settings.CORRECTION_DATA)
-    LASER_CORRECTION_DATA = scipy.io.loadmat(settings.LASER_CORRECTION_DATA)
-    excitation_efficiency = LASER_CORRECTION_DATA['excitation_efficiency']
+    #data = tifffile.imread(os.path.join(input_location, "color_split.tif"))
+    print("Laser pattern (color channels) correction...")
+    if os.path.exists(os.path.join(output_location, 'omehans', '0', '0', '0')) and os.path.exists(os.path.join(output_location, "laser_corrected.tif")):
+        print("Laser pattern corrected (color channels) previously")
+        return
+    print("reading omehans")
+    #bg_file_name = glob(os.path.join(os.path.dirname(spool_file), f"{settings.EMPTY_FRAMES_FILE_NAME_FORMAT}272.fli"))[0]
+    image_dask_zarray = read_omehans(os.path.join(input_location, "omehans"))
+    color_data_split = image_dask_zarray.compute()
+    CORRECTION_MATRICES = scipy.io.loadmat(settings.CORRECTION_DATA)
+    SIMULATION_MATRICES = scipy.io.loadmat(settings.LASER_CORRECTION_DATA)
+    excitation_efficiency = SIMULATION_MATRICES['excitation_efficiency']
 
     # Laser power normalization
-    laser_power_at_sample = np.array([0.022, 0.115, 0.263, 0.285])
+    #laser_power_at_sample = np.array([0.022, 0.115, 0.263, 0.285])
+    laser_power_at_sample = np.array([0.10, 0.44, 0.40, 1.08]) #First hemibrain
     laser_power = laser_power_at_sample / np.max(laser_power_at_sample)  # Normalize laser powers
 
-    POWELL_SPL_MASK_FF_norm = CORRECTION_DATA['POWELL_SPL_MASK_FF_norm']
-    Flch = LASER_CORRECTION_DATA['Flch']
+    POWELL_SPL_MASK_FF_norm = CORRECTION_MATRICES['POWELL_SPL_MASK_FF_norm']
+    Flch = SIMULATION_MATRICES['Flch']
     Flch_rel = Flch.copy()
     Flch_rel = Flch_rel / np.sum(Flch_rel, axis=1, keepdims=True)
 
@@ -213,13 +258,47 @@ def laser_correction_colors(input_location, output_location):
     # 5. Normalize the result and divide elemnt-wise, resulting shape should be (ch x z x y)
     max_values = np.max(np.max(laser_correction_ch_SP[:, 100:-100, 100:-100], axis=1), axis=1)
     laser_correction_ch_SP = laser_correction_ch_SP / max_values[:, np.newaxis, np.newaxis]
-    corrected_data = data / (laser_correction_ch_SP[:, np.newaxis, :, :] + 0.001)
-    min_val = corrected_data.min()
-    max_val = corrected_data.max()
-    corrected_data = (corrected_data - min_val) / (max_val - min_val)
-    corrected_data = corrected_data * 65535
 
-    tifffile.imwrite(os.path.join(output_location, 'laser_corrected.tif'), np.round(corrected_data).astype('uint16'))
+    color_data_split = color_data_split.astype('float32')
+
+    laser_correction_ch_SP = laser_correction_ch_SP.astype('float32')
+
+    ch0 = color_data_split[0,:, :, :]
+    ch1 = color_data_split[1,:, :, :]
+    ch2 = color_data_split[2,:, :, :]
+    ch3 = color_data_split[3,:, :, :]
+
+    color_stack = [ch0, ch1, ch2 ,ch3]
+
+    laser_pattern_colors = laser_correction_ch_SP[:, np.newaxis, :, :] + 1
+
+    ch0_pattern = laser_pattern_colors[0, :, :]
+    ch1_pattern = laser_pattern_colors[1, :, :]
+    ch2_pattern = laser_pattern_colors[2, :, :]
+    ch3_pattern = laser_pattern_colors[3, :, :]
+
+    pattern_stack = [ch0_pattern, ch1_pattern, ch2_pattern, ch3_pattern]
+
+    for i in range(len(color_stack)):
+        corrected_data = color_stack[i] / pattern_stack[i]
+
+        """         min_val = corrected_data.min()
+        max_val = corrected_data.max()
+        corrected_data = (corrected_data - min_val) / (max_val - min_val)
+        corrected_data = corrected_data * 65535 """
+
+        image_np_array_laserCorrected = corrected_data.astype('float32')
+
+        #tifffile.imwrite(os.path.join(output_location, 'laser_corrected.tif'), np.round(corrected_data).astype('uint16'))
+        try:
+            write_omehans(os.path.join(output_location, f'ch{i}_omehans'), image_np_array_laserCorrected.astype('uint16'))
+        except zarr.errors.ContainsArrayError:
+            print(".omehans array already exists")
+        try:
+            write_zarr(os.path.join(output_location, f'ch{i}_zarr'), image_np_array_laserCorrected.astype('uint16'))
+        except zarr.errors.ContainsArrayError:
+            print(".zarr array already exists")
+        print("Saved laser-pattern-corrected file")
 
 
 def laser_correction_byInverse(m):  # tbd whether needs to be processed separately
@@ -668,6 +747,7 @@ def nuclei_color_registration(input_nuclei_location, input_color_location, outpu
 
 
 def preprocess_nuclei(spool_file, location):
+    # BG subtraction
     bg_subtracted_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_bg_subtracted")
     try:
         os.makedirs(bg_subtracted_location)
@@ -675,17 +755,20 @@ def preprocess_nuclei(spool_file, location):
         pass
     bg_file_name = glob(os.path.join(os.path.dirname(spool_file), f"{settings.EMPTY_FRAMES_FILE_NAME_FORMAT}272.fli"))[0]
     subtract_background(location, bg_subtracted_location, bg_file_name)
-    # laser_corrected_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_laser_corrected")
-    # try:
-    #     os.makedirs(laser_corrected_location)
-    # except:
-    #     pass
-    # laser_correction_nuclei(bg_subtracted_location, laser_corrected_location)
-    preprocessed_location = bg_subtracted_location
+
+    # Laser correction
+    laser_corrected_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_laser_corrected")
+    try:
+        os.makedirs(laser_corrected_location)
+    except:
+        pass
+    laser_correction_nuclei(bg_subtracted_location, laser_corrected_location)
+    preprocessed_location = laser_corrected_location
     return preprocessed_location
 
 
 def preprocess_colors(spool_file, location):
+    # BG subtraction
     bg_subtracted_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_bg_subtracted")
     try:
         os.makedirs(bg_subtracted_location)
@@ -693,21 +776,24 @@ def preprocess_colors(spool_file, location):
         pass
     bg_file_name = glob(os.path.join(os.path.dirname(spool_file), f"{settings.EMPTY_FRAMES_FILE_NAME_FORMAT}088.fli"))[0]
     subtract_background(location, bg_subtracted_location, bg_file_name)
+
     color_split_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_color_split")
     try:
         os.makedirs(color_split_location)
     except:
         pass
-    # color_data_zyx = np.transpose(color_data, (1, 2, 0)) I think the splitter data needs to be transposed like
+
+    # Laser correction
+    #color_data_zyx = np.transpose(color_data, (1, 2, 0)) 
     split_color_channels(bg_subtracted_location, color_split_location)
 
-    # laser_corrected_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_laser_corrected")
-    #
-    # try:
-    #     os.makedirs(laser_corrected_location)
-    # except:
-    #     pass
-    # laser_correction_colors(color_split_location, laser_corrected_location)
+    laser_corrected_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_laser_corrected")
+    
+    try:
+        os.makedirs(laser_corrected_location)
+    except:
+        pass
+    laser_correction_colors(color_split_location, laser_corrected_location)
 
     # color_registered_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_color_registered")
     # try:
@@ -715,7 +801,7 @@ def preprocess_colors(spool_file, location):
     # except:
     #     pass
     # color_registration(color_split_location, color_registered_location)  # register to the first color channel
-    preprocessed_location = color_split_location
+    preprocessed_location = laser_corrected_location
     return preprocessed_location
 
 
