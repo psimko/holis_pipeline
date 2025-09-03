@@ -58,7 +58,7 @@ from holis_pipeline.chunk_data import chunk_data
 from holis_pipeline.read_data import read_fli_as_zarr
 from holis_pipeline.detect_nuclei import detect_cells_deepblink_slurm
 from holis_pipeline.utils.create_masks import get_chunks_with_bright_signal, get_chunks_with_background
-from holis_pipeline.preprocess import preprocess_nuclei, preprocess_colors, unmix_data, nuclei_color_registration
+from holis_pipeline.preprocess_v2_sep2025 import preprocess_nuclei, preprocess_colors # , unmix_data, nuclei_color_registration
 from holis_pipeline.utils.create_folders import create_folders
 from holis_pipeline.unchunk_data import combine_masks, remove_chunking_artifacts, extract_coords
 from holis_pipeline.extract_spectral_info import get_spectral_info
@@ -90,11 +90,13 @@ file_handler = logging.FileHandler(
         )
     )
 )
+
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(name)s - %(levelname)s - %(message)s',
     handlers=[file_handler]
 )
+
 log = logging.getLogger(__name__)
 
 
@@ -111,16 +113,20 @@ def main():
     COLORS_DIR = read_fli_as_zarr(COLORS_FLI, os.path.join(OUTPUT_DIR, os.path.basename(COLORS_FLI)))
     print("Read color channels")
 
-    # Preprocess data
-    print("Preprocessing data")
-    NUCLEI_DIR = preprocess_nuclei(NUCLEI_FLI, NUCLEI_DIR)
-    print("Preprocessed nuclei")
-    COLORS_DIR = preprocess_colors(COLORS_FLI, COLORS_DIR)  # TODO separate task
-    print("Preprocessed colors")
-    REGISTERED_DIR = os.path.join(OUTPUT_DIR, f"{os.path.basename(NUCLEI_FLI).replace('272.fli', '')}_nuclei_colors_registered")
-    nuclei_color_registration(NUCLEI_DIR, COLORS_DIR, REGISTERED_DIR)
+    # === Preprocess ===
+    print("Preprocessing nuclei… (BG → laser-correct)")
+    NUCLEI_PREP = preprocess_nuclei(NUCLEI_FLI, NUCLEI_DIR)
+    print("Nuclei preprocessed at:", NUCLEI_PREP)
 
-    # unmix_data()
+    print("Preprocessing colors… (BG → laser-correct → split → register → unmix)")
+    COLORS_UNMIXED = preprocess_colors(COLORS_FLI, COLORS_DIR, NUCLEI_PREP)
+    print("Colors unmixed at:", COLORS_UNMIXED)
+
+    log.info("Preprocessing stages complete.")
+    log.info(f"NUCLEI_PREP:  {NUCLEI_PREP}")
+    log.info(f"COLORS_UNMIXED: {COLORS_UNMIXED}")
+    log.info(f"TOTAL TIME: {datetime.now() - tstart}")
+
 
     # output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')  # TODO: do we need scale? Will it always be full resolution?
     #
