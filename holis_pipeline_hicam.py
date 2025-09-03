@@ -107,11 +107,11 @@ def main():
     create_folders(OUTPUT_DIR)
 
     # Read data to zarr
-    print("Reading data")
+    log.info("Reading data")
     NUCLEI_DIR = read_fli_as_zarr(NUCLEI_FLI, os.path.join(OUTPUT_DIR, os.path.basename(NUCLEI_FLI)))
-    print("Read nuclei channel")
+    log.info("Read nuclei channel")
     COLORS_DIR = read_fli_as_zarr(COLORS_FLI, os.path.join(OUTPUT_DIR, os.path.basename(COLORS_FLI)))
-    print("Read color channels")
+    log.info("Read color channels")
 
     # === Preprocess ===
     print("Preprocessing nuclei… (BG → laser-correct)")
@@ -126,6 +126,7 @@ def main():
     log.info(f"NUCLEI_PREP:  {NUCLEI_PREP}")
     log.info(f"COLORS_UNMIXED: {COLORS_UNMIXED}")
     log.info(f"TOTAL TIME: {datetime.now() - tstart}")
+
 
 
     # output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')  # TODO: do we need scale? Will it always be full resolution?

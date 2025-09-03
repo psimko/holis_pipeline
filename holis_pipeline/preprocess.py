@@ -1,6 +1,7 @@
 import os
 import sys
 from glob import glob
+import logging
 
 import dask.array as da
 import numpy as np
@@ -13,7 +14,10 @@ import zarr
 from holis_pipeline import settings
 from holis_pipeline.preprocessing_functions import read_data_file
 from holis_pipeline.read_data import read_fli_as_zarr
-from holis_pipeline.utils.zarr_related import read_omehans, write_omehans, write_zarr
+from holis_pipeline.utils.zarr_related import read_omehans, write_omehans, write_zarr, write_dask_zarr_compatible_with_napari
+
+
+log = logging.getLogger(__name__)
 
 
 def subtract_background(input_location, output_location, bg_file_name):
@@ -23,16 +27,16 @@ def subtract_background(input_location, output_location, bg_file_name):
            empty frames (.mat) - the same shape as the data (1 file per nuclei+colors fli pair)
     output: flattened .omehans - same shape as input
     """
-    print("Subtracting BG...")
+    log.info("Subtracting BG...")
     if os.path.exists(os.path.join(output_location, 'omehans', '0', '0', '0')) and os.path.exists(os.path.join(output_location, "bg_subtracted.tif")):
-        print("BG already subtracted previously")
+        log.info("BG already subtracted previously")
         return
-    print("reading omehans")
+    log.info("reading omehans")
     image_dask_zarray = read_omehans(input_location)
     image_np_array = image_dask_zarray.compute()
     # tifffile.imwrite(os.path.join(output_location, "original.tif"), image_np_array.astype('uint16'))
     write_zarr(os.path.join(output_location, 'original_zarr'), image_np_array.astype('uint16'))
-    print("Reading BG file")
+    log.info("Reading BG file")
     BG_FOLDER = read_fli_as_zarr(bg_file_name, os.path.join(os.path.dirname(output_location), os.path.basename(bg_file_name).replace('.fli', '')))
     bg_dask_zarray = read_omehans(BG_FOLDER)
     bg_dask_zarray_sample = bg_dask_zarray[15000:18000,:,:]
@@ -42,23 +46,81 @@ def subtract_background(input_location, output_location, bg_file_name):
     # bg_mask = da.mean(da.asarray(bg_array, dtype=np.float32), axis=2) - 2**10
     bg_mask_np = np.mean(bg_array.astype('float32'), axis=0).round()
     print("calculated mean")
+
     # bg_mask_np = bg_mask.compute()
 
     # image_dask_zarray_bgSubtracted = image_dask_zarray - bg_mask[:, :, np.newaxis]
     # image_np_array_bgSubtracted = image_dask_zarray_bgSubtracted.compute()
     image_np_array_bgSubtracted = image_np_array.astype('float32') - bg_mask_np[np.newaxis, :, :].astype('float32')
+
     image_np_array_bgSubtracted[image_np_array_bgSubtracted < 0] = 0
+    log.info("corrected negative values")
     # tifffile.imwrite(os.path.join(output_location, "bg_subtracted.tif"), image_np_array_bgSubtracted.astype('uint16'))
     try:
         write_omehans(os.path.join(output_location, 'omehans'), image_np_array_bgSubtracted.astype('uint16'))
     except zarr.errors.ContainsArrayError:
-        print(".omehans array already exists")
+        log.info(".omehans array already exists")
     write_zarr(os.path.join(output_location, 'zarr'), image_np_array_bgSubtracted.astype('uint16'))
 
     # image_np_array_bgSubtracted = image_np_array.astype('float32') - bg_array.astype('float32')
     # image_np_array_bgSubtracted[image_np_array_bgSubtracted < 0] = 0
     # tifffile.imwrite(os.path.join(output_location, "raw_minus_bg.tif"), image_np_array_bgSubtracted.astype('uint16'))
-    print("Saved BG-subtracted file")
+    log.info("Saved BG-subtracted file")
+
+
+def subtract_background_dask(input_location, output_location, bg_file_name):
+    """
+    Subtract background from input omehans using mean of background file.
+    """
+    import os
+    os.environ["OMP_NUM_THREADS"] = "8"
+    os.environ["OPENBLAS_NUM_THREADS"] = "8"
+    os.environ["MKL_NUM_THREADS"] = "8"
+    os.environ["NUMEXPR_NUM_THREADS"] = "8"
+
+    import dask
+    from dask.diagnostics import ProgressBar
+
+    # Optional: configure Dask to use 8 threads
+    dask.config.set(scheduler='threads', num_workers=8)
+
+    # Optional: show progress
+    ProgressBar().register()
+
+    log.info("Reading omehans")
+    image_dask = read_omehans(input_location)  # Dask array
+
+    log.info("Reading BG file")
+    bg_folder = read_fli_as_zarr(bg_file_name, os.path.join(os.path.dirname(output_location),
+                                                             os.path.basename(bg_file_name).replace('.fli', '')))
+    bg_dask = read_omehans(bg_folder)  # Dask array
+
+    log.info("Calculating mean background")
+    bg_mask = bg_dask.astype('float32').mean(axis=2).round()  # (H, W)
+
+    # Expand dims for broadcasting: (H, W) → (H, W, 1)
+    bg_mask = bg_mask[:, :, None]
+
+    log.info("Subtracting background lazily")
+    # Lazy subtraction, clamp negatives to 0
+    subtracted = image_dask.astype('float32') - bg_mask
+    subtracted = da.maximum(subtracted, 0).astype('uint16')  # Apply clamp + convert to uint16
+
+    log.info("Writing intermediate and final results")
+    # write_zarr(os.path.join(output_location, 'original_zarr'), image_dask.astype('uint16'))
+    write_dask_zarr_compatible_with_napari(os.path.join(output_location, 'original_zarr'), image_dask.astype('uint16'))
+    # image_dask.astype('uint16').to_zarr(os.path.join(output_location, 'original_zarr'), overwrite=False)
+    # write_zarr(os.path.join(output_location, 'bg_zarr'), bg_dask.astype('uint16'))
+    write_dask_zarr_compatible_with_napari(os.path.join(output_location, 'bg_zarr'), bg_dask.astype('uint16'))
+    # bg_dask.astype('uint16').to_zarr(os.path.join(output_location, 'bg_zarr'), overwrite=False)
+    # write_zarr(os.path.join(output_location, 'zarr'), subtracted)
+    write_dask_zarr_compatible_with_napari(os.path.join(output_location, 'zarr'), subtracted)
+    # subtracted.to_zarr(os.path.join(output_location, 'zarr'), overwrite=False)
+
+    # try:
+    #     write_omehans(os.path.join(output_location, 'omehans'), subtracted)
+    # except zarr.errors.ContainsArrayError:
+    #     log.info(".omehans array already exists")
 
 
 def split_color_channels(input_location, output_location):
@@ -754,6 +816,7 @@ def preprocess_nuclei(spool_file, location):
     except:
         pass
     bg_file_name = glob(os.path.join(os.path.dirname(spool_file), f"{settings.EMPTY_FRAMES_FILE_NAME_FORMAT}272.fli"))[0]
+
     subtract_background(location, bg_subtracted_location, bg_file_name)
 
     # Laser correction
@@ -775,6 +838,7 @@ def preprocess_colors(spool_file, location):
     except:
         pass
     bg_file_name = glob(os.path.join(os.path.dirname(spool_file), f"{settings.EMPTY_FRAMES_FILE_NAME_FORMAT}088.fli"))[0]
+
     subtract_background(location, bg_subtracted_location, bg_file_name)
 
     color_split_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_color_split")
@@ -786,6 +850,7 @@ def preprocess_colors(spool_file, location):
     # Laser correction
     #color_data_zyx = np.transpose(color_data, (1, 2, 0)) 
     split_color_channels(bg_subtracted_location, color_split_location)
+
 
     laser_corrected_location = os.path.join(os.path.dirname(location), f"{os.path.basename(location)}_laser_corrected")
     
@@ -801,7 +866,9 @@ def preprocess_colors(spool_file, location):
     # except:
     #     pass
     # color_registration(color_split_location, color_registered_location)  # register to the first color channel
+
     preprocessed_location = laser_corrected_location
+
     return preprocessed_location
 
 
