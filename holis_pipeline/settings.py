@@ -7,7 +7,7 @@ MODEL_PATH = '/bil/proj/rf1hillman/pynet/segmentation_mouse_pruned_norm_scaled__
 NUCLEI_RESOLUTION = [1.34, 1.54, 2.0]  # nuclei
 COLOR_RESOLUTION = [1.34, 1.54, 2.0]
 CUBE_SIZE = 10  # um to cut around nuclei
-GPU_ENV_NAME = 'pytorch'
+GPU_ENV_NAME = 'stack_to_multiscale_ngff' #'pytorch'
 LNODE_ENV_NAME = 'deepblink2'
 SCALE = 0  # resolution level to use for analysis
 NUCLEI_CHANNEL = 0
@@ -40,4 +40,3 @@ LASER_CORRECTION_DATA = '/bil/proj/rf1hillman/2024_07_29_AI7_EH5k_human_finalMar
 dir_name = '/bil/proj/rf1hillman/2024_07_29_AI7_EH5k_human_finalMarkerCombination_100mm/raw_HiCAMdata/'
 location_nuclei = 'wholeScan-run013-z01-y13-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli_ZARR_OUT/'
 location_colors = 'wholeScan-run013-z01-y13-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-088.fli_ZARR_OUT/'
-

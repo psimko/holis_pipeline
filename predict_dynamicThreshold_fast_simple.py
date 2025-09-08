@@ -15,8 +15,9 @@ import zarr
 import dask.array as da
 from skimage.transform import resize
 
-from utils.chunks import get_chunk_indices, get_origin_coords
-from utils.settings import *
+from holis_pipeline.utils.chunks import get_chunk_indices, get_origin_coords
+from holis_pipeline.settings import *
+from holis_pipeline_hicam import OUTPUT_DIR
 
 
 class UNet3D(nn.Module):
@@ -114,6 +115,7 @@ def get_inpainted_chunk(ind):
 print("-------------------- NUCLEI DETECTION ------------------")
 model_path = sys.argv[1]
 chunk_number = sys.argv[2]
+vol_unmixed = sys.argv[3]
 detection_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'detection')
 try:
     os.makedirs(detection_folder)
@@ -131,16 +133,20 @@ centroids_filename = os.path.join(detection_folder, f"napari_chunk_{str(chunk_nu
 
 # Read the chunk from zarr
 
-location = os.path.join(NUCLEI_DIR, f'scale{SCALE}')
+#location = os.path.join(NUCLEI_DIR, f'scale{SCALE}')
+location = vol_unmixed
 store = H5_Nested_Store(location)
 zarray = zarr.open(store)
-dask_zarray = da.array(zarray)
-lazy_tiff_stack = dask_zarray[0, 0, :, :, :]
+dask_zarray = da.array(zarray).compute()
+#lazy_tiff_stack = dask_zarray[0, 0, :, :, :]
+lazy_tiff_stack = dask_zarray
+print(f'lazy_tiff_stack {lazy_tiff_stack.shape}')
 ratios = (np.array(lazy_tiff_stack.shape) / np.array(CHUNK_SIZE)).astype('int') + 1
 patchify_chunks_shape = (*list(ratios), *CHUNK_SIZE)
 origin_coords = get_origin_coords(3, patchify_chunks_shape, CHUNK_SIZE)
 chunk_indices = get_chunk_indices(origin_coords, CHUNK_SIZE)
-lazy_data = dask_zarray[0, 0, :, :, :]
+#lazy_data = dask_zarray[0, 0, :, :, :]
+lazy_data = dask_zarray
 ind = chunk_indices[int(chunk_number)]
 yx_ratio = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
 yz_ratio = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
@@ -288,20 +294,20 @@ print(reconstructed_image.dtype)
 
 tifffile.imwrite(out_filename, reconstructed_image)
 
-# # save centroids
+# save centroids
 
-# # Compute the connected components of the binary mask
-# labels = measure.label(reconstructed_image)
+# Compute the connected components of the binary mask
+labels = measure.label(reconstructed_image)
 
-# # Calculate the centroid coordinates of each connected component
-# table = pd.DataFrame(
-#     measure.regionprops_table(
-#         labels,
-#         properties=['centroid']
-#         )
-#     )
+# Calculate the centroid coordinates of each connected component
+table = pd.DataFrame(
+    measure.regionprops_table(
+        labels,
+        properties=['centroid']
+        )
+    )
 
-# new_headers = {'centroid-0': 'axis-0', 'centroid-1': 'axis-1', 'centroid-2': 'axis-2'}
+new_headers = {'centroid-0': 'axis-0', 'centroid-1': 'axis-1', 'centroid-2': 'axis-2'}
 
-# # Save centroids to a CSV file
-# table.to_csv(centroids_filename, index=False, header=[new_headers[col] for col in table.columns])
+# Save centroids to a CSV file
+table.to_csv(centroids_filename, index=False, header=[new_headers[col] for col in table.columns])
