@@ -77,6 +77,8 @@ OUTPUT_DIR = sys.argv[2]
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
 
+output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')  # TODO: do we need scale? Will it always be full resolution?
+
 COLORS_FLI = NUCLEI_FLI.replace('272.fli', '088.fli')
 
 JOBS_DIR = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'slurm_jobs')
@@ -130,8 +132,6 @@ def main():
     log.info(f"COLORS_UNMIXED: {COLORS_UNMIXED}")
     log.info(f"TOTAL TIME: {datetime.now() - tstart}")
 
-
-    output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')  # TODO: do we need scale? Will it always be full resolution?
     
     chunk_indices = chunk_data(COLORS_UNMIXED, output_folder_scale)
     
