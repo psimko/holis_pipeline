@@ -234,15 +234,27 @@ def main():
         remaining_chunks = fg_chunks - sent_tasks
         time.sleep(2)
 
+    ### Combine layer masks - this is just for testing ###
+    layers = ["L1","L2","L3","L4"]
+    layer_dirs = []
+
+    for layer_name in layers:
+        layer_dir = os.path.join(SPECTRAL_INFO_DIR, layer_name)
+        os.makedirs(layer_dir, exist_ok=True)
+        layer_dirs.append(layer_dir)
+    for layer_dir in layer_dirs:
+        combine_masks(layer_dir, COLORS_UNMIXED, output_folder_scale, layer_dir)
+    ######################################################
+
     combined_spectral_info_location = combine_spectral_info_csv(
-    SPECTRAL_INFO_DIR,
-    os.path.join(output_folder_scale, "combined_spectral_info.csv"),
-    csv_pattern="spectral_chunk_*.csv",
-    spectral_prefix="spectral_chunk",
-    coord_cols=("axis-0","axis-1","axis-2"),
-    round_coords=True,       
-    dedupe=True,
-    dedupe_strategy="max_vol_l1",  # 'first' | 'max_vol_l1' | 'mean'
+        SPECTRAL_INFO_DIR,
+        os.path.join(output_folder_scale, "combined_spectral_info.csv"),
+        csv_pattern="spectral_chunk_*.csv",
+        spectral_prefix="spectral_chunk",
+        coord_cols=("axis-0","axis-1","axis-2"),
+        round_coords=True,       
+        dedupe=True,
+        dedupe_strategy="max_vol_l1",  # 'first' | 'max_vol_l1' | 'mean'
     )
     
 

@@ -534,7 +534,7 @@ def extract_volume_intensities_fast(
     centroids,                 # kept for signature parity (unused here)
     nuclei_mask,               # (Z,Y,X) binary or labeled
     vol_unmixed_chunk,         # iterable of channels, each (Z,Y,X)  OR  ndarray (C,Z,Y,X)
-    save_mask_path=None    # path to save union L3 shell as binary mask (0/255 uint8)
+    save_mask_path=None        # path to save union L3 shell as binary mask (0/255 uint8)
 ):
     """
     Vectorized per-label intensities for L1..L4:
@@ -669,8 +669,8 @@ def extract_volume_intensities_fast(
             out_path = os.path.join(layer_dir, f"mask_chunk_{chunk_str}.tif")
             tiff.imwrite(out_path, (layer_arr > 0).astype(np.uint8) * 255, metadata={'axes': 'ZYX'})
         print(layer_dirs)
-        for layer_dir in layer_dirs:
-            combine_masks(layer_dir, vol_unmixed, chunk_indices_folder, layer_dir)
+        #for layer_dir in layer_dirs:
+        #    combine_masks(layer_dir, vol_unmixed, chunk_indices_folder, layer_dir)
         print(f"Saved shell masks for chunk {chunk_number} into L1–L4 folders under {save_mask_path}")
 
 
