@@ -15,8 +15,9 @@ import zarr
 import dask.array as da
 from skimage.transform import resize
 
-from utils.chunks import get_chunk_indices, get_origin_coords
-from utils.settings import *
+from holis_pipeline.utils.chunks import get_chunk_indices, get_origin_coords
+from holis_pipeline.settings import *
+from holis_pipeline.utils.zarr_related import *
 
 
 class UNet3D(nn.Module):
@@ -114,37 +115,69 @@ def get_inpainted_chunk(ind):
 print("-------------------- NUCLEI DETECTION ------------------")
 model_path = sys.argv[1]
 chunk_number = sys.argv[2]
-detection_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'detection')
+vol_unmixed = sys.argv[3]
+detection_folder =  sys.argv[4]
 try:
     os.makedirs(detection_folder)
 except FileExistsError:
     pass
 
-masks_folder = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'detection_masks')
+masks_folder = os.path.join(detection_folder, 'detection_masks')
 try:
     os.makedirs(masks_folder)
 except FileExistsError:
     pass
+centroids_folder = os.path.join(detection_folder, 'centroids')
+try:
+    os.makedirs(centroids_folder)
+except FileExistsError:
+    pass
 
 out_filename = os.path.join(masks_folder, f'mask_chunk_{str(chunk_number).zfill(5)}.tif')
-centroids_filename = os.path.join(detection_folder, f"napari_chunk_{str(chunk_number).zfill(5)}.csv")
+centroids_filename = os.path.join(centroids_folder, f"napari_chunk_{str(chunk_number).zfill(5)}.csv")
 
 # Read the chunk from zarr
 
-location = os.path.join(NUCLEI_DIR, f'scale{SCALE}')
-store = H5_Nested_Store(location)
-zarray = zarr.open(store)
-dask_zarray = da.array(zarray)
-lazy_tiff_stack = dask_zarray[0, 0, :, :, :]
+location = os.path.join(vol_unmixed, 'omehans')
+#store = H5_Nested_Store(location)
+#zarray = zarr.open(store)
+#dask_zarray = da.array(zarray).compute()
+#lazy_tiff_stack = dask_zarray[0, 0, :, :, :]
+#lazy_tiff_stack = dask_zarray
+dask_zarray = read_omehans(location)
+lazy_tiff_stack = dask_zarray[0, :, :, :]
+print(f'lazy_tiff_stack {lazy_tiff_stack.shape}')
 ratios = (np.array(lazy_tiff_stack.shape) / np.array(CHUNK_SIZE)).astype('int') + 1
 patchify_chunks_shape = (*list(ratios), *CHUNK_SIZE)
 origin_coords = get_origin_coords(3, patchify_chunks_shape, CHUNK_SIZE)
-chunk_indices = get_chunk_indices(origin_coords, CHUNK_SIZE)
-lazy_data = dask_zarray[0, 0, :, :, :]
+
+# Chat gpt check of valid chunk indices
+#-----------------------------------------------------
+chunk_indices_path = os.path.join(detection_folder, 'chunk_indices.npy')
+if os.path.exists(chunk_indices_path):
+    chunk_indices = np.load(chunk_indices_path, allow_pickle=True)
+else:
+    chunk_indices = get_chunk_indices(origin_coords, CHUNK_SIZE)
+
+# Early exit if requested chunk is outside available range so SLURM reports the skipped chunk.
+if int(chunk_number) >= len(chunk_indices) or int(chunk_number) < 0:
+    print(f"Chunk {chunk_number} is invalid; available chunks: {len(chunk_indices)}")
+    sys.exit(1)
+#-----------------------------------------------------
+
+#lazy_data = dask_zarray[0, 0, :, :, :]
+lazy_data = dask_zarray[0, :, :, :]
 ind = chunk_indices[int(chunk_number)]
 yx_ratio = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
 yz_ratio = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
-bright_chunks = set(np.load(os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "bright_chunks.npy")))
+#bright_chunks = set(np.load(os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "bright_chunks.npy")))
+bright_chunks_path = os.path.join(detection_folder, 'bright_chunks.npy')
+if os.path.exists(bright_chunks_path):
+    bright_chunks = set(np.load(bright_chunks_path))
+else:
+    print(f"bright_chunks file not found at {bright_chunks_path}, proceeding without bright chunk info")
+    bright_chunks = set()
+
 if int(chunk_number) not in bright_chunks:
     stack = get_chunk(ind)
 else:

@@ -46,21 +46,15 @@ def merge_spectral_info_df():
     return df
 
 
-def combine_masks():
+def combine_masks(chunk_indices_folder, detection_masks_folder, vol_unmixed_folder):
     print("Merging masks")
-    chunk_indices = np.load(
-        os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "chunk_indices.npy"),
-        allow_pickle=True
-    )
-    store_nuclei = H5_Nested_Store(f"{NUCLEI_DIR}/scale{SCALE}")
+    chunk_indices = np.load(chunk_indices_folder, allow_pickle=True)
+    store_nuclei = H5_Nested_Store(vol_unmixed_folder) # This is just to get the shape for the combined mask
     zarray_nuclei = zarr.open(store_nuclei)
     raw_img_shape = zarray_nuclei.shape[-3:]
     combined_mask = np.zeros(raw_img_shape, dtype=np.uint8)
-    masks = sorted(
-        glob(
-            os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "detection_masks", "mask*.tif")
-        )
-    )
+    
+    masks = sorted(glob(os.path.join(detection_masks_folder, "mask*.tif")))
     for mask in masks:
         chunk_number = int(re.findall(r"\d+", os.path.basename(mask))[-1])
         print("Adding chunk", chunk_number)
@@ -87,7 +81,7 @@ def combine_masks():
         else:
             mask_raw_space = resize(mask_resized_space, CHUNK_SIZE) > 0
         combined_mask[chunk_slices[0], chunk_slices[1], chunk_slices[2]] = mask_raw_space
-        tifffile.imwrite(os.path.join(OUTPUT_DIR, f"scale_{SCALE}", "combined_mask_raw_space.tif"), combined_mask)
+        tifffile.imwrite(os.path.join(chunk_indices_folder, "combined_mask_raw_space.tif"), combined_mask)
 
 
 log.info("Merging spectral info df")

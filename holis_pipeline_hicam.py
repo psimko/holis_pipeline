@@ -60,8 +60,9 @@ from holis_pipeline.detect_nuclei import detect_cells_slurm
 from holis_pipeline.utils.create_masks import get_chunks_with_bright_signal, get_chunks_with_background
 from holis_pipeline.preprocess_v2_sep2025 import preprocess_nuclei, preprocess_colors # , unmix_data, nuclei_color_registration
 from holis_pipeline.utils.create_folders import create_folders
-from holis_pipeline.unchunk_data import combine_masks, remove_chunking_artifacts, extract_coords
-from holis_pipeline.extract_spectral_info import get_spectral_info
+from holis_pipeline.unchunk_data import combine_masks, remove_chunking_artifacts, combine_centroids_csv, extract_coords, combine_spectral_info_csv
+from holis_pipeline.extract_spectral_info import get_spectral_info_slurm
+
 
 """
 TODO:
@@ -83,6 +84,7 @@ COLORS_FLI = NUCLEI_FLI.replace('272.fli', '088.fli')
 
 JOBS_DIR = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'slurm_jobs')
 DETECTION_DIR = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'detection')
+SPECTRAL_INFO_DIR = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'spectral_info')
 
 work_dir = os.getcwd()
 print("Working directory: ", work_dir)
@@ -134,6 +136,7 @@ def main():
 
     
     chunk_indices = chunk_data(COLORS_UNMIXED, output_folder_scale)
+    print(f'Chunk indices: {chunk_indices}')
     
     if FOREGROUND_MASKS_ENABLED:
         # extract low-resolution masks for foreground
@@ -159,35 +162,92 @@ def main():
     log.info(f"Total foreground chunks: {len(fg_chunks)}")
     detect_cells_slurm(list(fg_chunks), COLORS_UNMIXED, JOBS_DIR, DETECTION_DIR)
     log.info("All nuclei detection tasks were submitted")
-    #
-    # # check which csv files have been generated
-    # spectral_info_folder = os.path.join(output_folder_scale, 'spectral_info')
-    # sent_tasks = set()
-    # remaining_chunks = fg_chunks.copy()
-    # while len(remaining_chunks):
-    #     print("Chunks remaining to do nuclei detection", len(remaining_chunks))
-    #     detection_done = set([
-    #         int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(detection_folder, "*.csv"))
-    #     ])
-    #     chunk_numbers_set = detection_done - sent_tasks
-    #     sent_tasks.update(chunk_numbers_set)
-    #     remaining_chunks = fg_chunks - sent_tasks
-    #     time.sleep(2)
-    #
-    # log.info("All nuclei detection jobs finished")
-    # tfin_detection = datetime.now()
-    # log.info(f"Time spent on extraction + nuclei detection: {tfin_detection - tstart}")
-    #
+    
+    # check which csv files have been generated
+    sent_tasks = set()
+    remaining_chunks = fg_chunks.copy()
+
+    centroids_folder = os.path.join(DETECTION_DIR, 'centroids')
+    try:
+        os.makedirs(centroids_folder)
+    except FileExistsError:
+        pass
+
+    while len(remaining_chunks):
+        print("Chunks remaining to do nuclei detection", len(remaining_chunks))
+        detection_done = set([
+            int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(centroids_folder, "*.csv"))
+        ])
+        chunk_numbers_set = detection_done - sent_tasks
+        sent_tasks.update(chunk_numbers_set)
+        remaining_chunks = fg_chunks - sent_tasks
+        time.sleep(2)
+    
+    log.info("All nuclei detection jobs finished")
+    tfin_detection = datetime.now()
+    log.info(f"Time spent on extraction + nuclei detection: {tfin_detection - tstart}")
+    
     # # ================= Merge masks and df with coordinates =================
-    #
-    # combined_mask_location = combine_masks(NUCLEI_DIR)
+
+    detection_masks_folder = os.path.join(DETECTION_DIR, 'detection_masks')
+    try:
+        os.makedirs(detection_masks_folder)
+    except FileExistsError:
+        pass
+    
+    combined_mask_location = combine_masks(detection_masks_folder, COLORS_UNMIXED, output_folder_scale, output_folder_scale)   #DETECTION_DIR is where the chunk indices are stored
     # no_artifact_mask_location = remove_chunking_artifacts(combined_mask_location)
-    # coords_file = extract_coords(no_artifact_mask_location, OUTPUT_DIR)
-    #
-    # spectral_info_df = get_spectral_info(coords_file, COLORS_DIR)  # single task? No chunks?
-    # # TODO: should spectral info be extracted after all neighbor slabs are finished?
-    # print("Spectral information saved at", spectral_info_df)
-    # log.info("All Done!")
+    #coords_file = extract_coords(combined_mask_location, output_folder_scale, coord_order="zyx", connectivity=1, min_size=4, float_dtype=np.float32)
+
+
+    
+    combined_centroids_location = combine_centroids_csv(
+        centroids_folder,
+        detection_masks_folder,
+        COLORS_UNMIXED,
+        output_folder_scale,
+        chunk_indices_name="chunk_indices.npy",
+        csv_pattern="*.csv",
+        mask_pattern="*.tif",
+        centroid_prefix="centroids",   # anchor for parsing chunk id from CSV names
+        mask_prefix="centroids",            # anchor for parsing chunk id from mask names
+        coord_order="zyx",             # your CSVs appear to be (z,y,x)
+        dedupe=True,
+        output_file_name="combined_centroids.csv"
+    )
+    
+    get_spectral_info_slurm(list(fg_chunks), output_folder_scale, centroids_folder, detection_masks_folder, COLORS_UNMIXED, JOBS_DIR, SPECTRAL_INFO_DIR)
+    #spectral_info_location = get_spectral_info_slurm(list(fg_chunks), output_folder_scale, centroids_folder, detection_masks_folder, COLORS_UNMIXED, JOBS_DIR, SPECTRAL_INFO_DIR)  # single task? No chunks? 
+    #spectral_info_location = # single task
+
+    # check which csv files have been generated
+    sent_tasks = set()
+    remaining_chunks = fg_chunks.copy()
+
+    while len(remaining_chunks):
+        print("Chunks remaining to do spectral extraction", len(remaining_chunks))
+        detection_done = set([
+            int(re.findall(r"\d+", os.path.basename(x))[-1]) for x in glob(os.path.join(SPECTRAL_INFO_DIR, "*.csv"))
+        ])
+        chunk_numbers_set = detection_done - sent_tasks
+        sent_tasks.update(chunk_numbers_set)
+        remaining_chunks = fg_chunks - sent_tasks
+        time.sleep(2)
+
+    combined_spectral_info_location = combine_spectral_info_csv(
+    SPECTRAL_INFO_DIR,
+    os.path.join(output_folder_scale, "combined_spectral_info.csv"),
+    csv_pattern="spectral_chunk_*.csv",
+    spectral_prefix="spectral_chunk",
+    coord_cols=("axis-0","axis-1","axis-2"),
+    round_coords=True,       
+    dedupe=True,
+    dedupe_strategy="max_vol_l1",  # 'first' | 'max_vol_l1' | 'mean'
+    )
+    
+
+    print("Spectral information saved at", combined_spectral_info_location)
+    log.info("All Done!")
 
 
 if __name__ == "__main__":

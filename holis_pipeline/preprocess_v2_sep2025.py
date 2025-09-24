@@ -237,8 +237,8 @@ def split_color_channels(input_location, output_location, center_pos=None):
     cz = center_pos[1] if center_pos else Z // 2
 
     ch1 = vol[:, :cy, :cz]   # top-left in (Y,Z)
-    ch2 = vol[:, :cy, cz:]
-    ch3 = vol[:, cy:, :cz]
+    ch2 = vol[:, cy:, :cz]
+    ch3 = vol[:, :cy, cz:]
     ch4 = vol[:, cy:, cz:]
 
     # crop to common min size along Y/Z
