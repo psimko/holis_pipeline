@@ -115,7 +115,7 @@ def is_compressed_fli(file_name):
 def get_len_fli(file_name):
     compressed = is_compressed_fli(file_name)
     if not compressed:
-        return os.path.getsize(file_path)
+        return os.path.getsize(file_name)
     else:
         with open(file_name, 'rb') as f:
             header_size = 18
