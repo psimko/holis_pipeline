@@ -40,7 +40,10 @@ def write_zarr(path_to_zarr, numpy_data):
     print("Saving .zarr array")
     if not os.path.exists(path_to_zarr):
         os.makedirs(path_to_zarr)
-    if numpy_data.ndim == 3:
+    if numpy_data.ndim == 2:
+        #numpy_data = numpy_data[None, ...]  # (1, Y, X)
+        chunks = (128, 128)
+    elif numpy_data.ndim == 3:
         chunks = (128, 128, 128)
     elif numpy_data.ndim == 4:
         chunks = (1, 128, 128, 128)

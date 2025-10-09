@@ -13,7 +13,7 @@ def write_detection_task_for_slurm(chunk_number, vol_unmixed, task_path, output_
         f.write('module load miniconda3\n')
         f.write(f'source activate {GPU_ENV_NAME}')
         f.write('\n')
-        f.write(f'python {work_dir}/predict_dynamicThreshold_fast.py')  # TODO
+        f.write(f'python {work_dir}/predict_dynamicThreshold_fast_simple.py')  # TODO
         f.write(' ')
         f.write(MODEL_PATH)
         f.write(' ')

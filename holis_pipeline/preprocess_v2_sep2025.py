@@ -45,11 +45,11 @@ def _clip16(a):
 def _safe_div(a: np.ndarray, b: np.ndarray, eps: float = 1e-6):
     return a / (b + eps)
 
-def subtract_background(input_location, output_location, bg_yz: np.ndarray):
+def subtract_background(input_location, output_location, bg_zy: np.ndarray):
 
     """
-    Input: data .omehans (X,Y,Z), dark frames (.npy) (Y,Z) (1 file per nuclei+colors fli pair), dark frames will be broadcast across X 
-    Output: .omehans (X,Y,Z)
+    Input: data .omehans (X,Z,Y), dark frames (.npy) (Z,Y) (1 file per nuclei+colors fli pair), dark frames will be broadcast across X 
+    Output: .omehans (X,Z,Y)
     """
 
     omehans_root = os.path.join(output_location, 'omehans')
@@ -58,18 +58,18 @@ def subtract_background(input_location, output_location, bg_yz: np.ndarray):
         return
 
     print("Subtracting BG...")
-    vol_xyz = read_omehans(input_location).compute().astype(np.float32)  # (X,Y,Z)
-    X, Y, Z = vol_xyz.shape
+    vol_xzy = read_omehans(input_location).compute().astype(np.float32)  # (X,Z,Y)
+    X, Z, Y = vol_xzy.shape
 
     # Optional save of the original image
     # tifffile.imwrite(os.path.join(output_location, "original.tif"), img.astype('uint16'))
     #write_zarr(os.path.join(output_location, 'original_zarr'), img.astype('uint16'))
 
-    if bg_yz.shape != (Y, Z):
-        raise ValueError(f"BG mask must be (Y,Z)={Y,Z}, got {bg_yz.shape}")
+    if bg_zy.shape != (Z, Y):
+        raise ValueError(f"BG mask must be (Z,Y)={Z,Y}, got {bg_yz.shape}")
 
-    bg = bg_yz.astype(np.float32) - 1024.0  # your original -1024
-    out = vol_xyz - bg  # broadcast over X
+    bg = bg_zy.astype(np.float32) - 1024.0  # your original -1024
+    out = vol_xzy - bg  # broadcast over X
     np.maximum(out, 0, out)
 
     # Save
@@ -90,11 +90,11 @@ def subtract_background(input_location, output_location, bg_yz: np.ndarray):
 
 
 
-def laser_correction_nuclei(input_location, output_location, ff_yz, pattern_yz):
+def laser_correction_nuclei(input_location, output_location, ff_zy, pattern_zy):
     """
     Input:
-        - flattened .omehans (X,Y,Z)
-        - laser pattern matrix (Y,Z)
+        - flattened .omehans (X,Z,Y)
+        - laser pattern matrix (Z,Y)
         - absorption matrix (n_fluorophores, n_lasers) - (5x4) - first row   for nuclei
         - mixing (fluorescence) matrix (n_fluorophores, n_channels) - (5x5) - first column for nuclei
     Output: corrected .omehans the same shape as input
@@ -106,14 +106,14 @@ def laser_correction_nuclei(input_location, output_location, ff_yz, pattern_yz):
         print("Laser pattern corrected (nuclei) previously")
         return
 
-    print("Laser correction (nuclei): XYZ vol ÷ YZ FF ÷ YZ pattern")
-    img = read_omehans(os.path.join(input_location, "omehans")).compute().astype(np.float32)  # (X,Y,Z)
-    X, Y, Z = img.shape
-    if ff_yz.shape != (Y, Z) or pattern_yz.shape != (Y, Z):
-        raise ValueError("FF and pattern must be (Y,Z)")
+    print("Laser correction (nuclei): XZY vol ÷ ZY FF ÷ ZY pattern")
+    img = read_omehans(os.path.join(input_location, "omehans")).compute().astype(np.float32)  # (X,Z,Y)
+    X, Z, Y = img.shape
+    if ff_zy.shape != (Z, Y) or pattern_zy.shape != (Z, Y):
+        raise ValueError("FF and pattern must be (Z,Y)")
 
-    ff = ff_yz.astype(np.float32)
-    pat = pattern_yz.astype(np.float32)
+    ff = ff_zy.astype(np.float32)
+    pat = pattern_zy.astype(np.float32)
 
     ff_corr = _safe_div(img, ff)
     corr = _safe_div(ff_corr, pat)
@@ -132,12 +132,12 @@ def laser_correction_nuclei(input_location, output_location, ff_yz, pattern_yz):
 
 
 
-def laser_correction_colors(input_location, output_location, ff_cyz, pattern_cyz, chunk_x: Optional[int] = None, target_bytes: int = 512 * 1024 * 1024, center_crop: int = 100,):
+def laser_correction_colors(input_location, output_location, ff_czy, pattern_czy, chunk_x: Optional[int] = None, target_bytes: int = 512 * 1024 * 1024, center_crop: int = 100,):
     """
     Input:
-        - flattened .omehans (X,Y,Z)
-        - ff correction (Y,Z)
-        - laser pattern matrix (Y,Z)
+        - flattened .omehans (X,Z,Y)
+        - ff correction (Z,Y)
+        - laser pattern matrix (Z,Y)
         - absorption matrix (n_fluorophores, n_lasers) - (5x4) - first row   for nuclei
         - mixing (fluorescence) matrix (n_fluorophores, n_channels) - (5x5) - first column for nuclei
     Output: corrected .omehans the same shape as input
@@ -150,44 +150,44 @@ def laser_correction_colors(input_location, output_location, ff_cyz, pattern_cyz
         print("Color laser correction already done")
         return
 
-    print("Laser correction (colors): XYZ ÷ YZ ÷ YZ")
-    img = read_omehans(os.path.join(input_location, "omehans")).compute().astype(np.float32)  # (X,Y,Z)
-    X, Y, Z = img.shape
+    print("Laser correction (colors): XZY ÷ ZY ÷ ZY")
+    img = read_omehans(os.path.join(input_location, "omehans")).compute().astype(np.float32)  # (X,Z,Y)
+    X, Z, Y = img.shape
 
-    def to_yz(mask: np.ndarray, name: str) -> np.ndarray:
+    def to_zy(mask: np.ndarray, name: str) -> np.ndarray:
         m = np.asarray(mask)
         if m.ndim == 2:
-            if m.shape != (Y, Z):
-                raise ValueError(f"{name} must be (Y,Z)={(Y,Z)}, got {m.shape}")
+            if m.shape != (Z,Y):
+                raise ValueError(f"{name} must be (Z,Y)={(Z,Y)}, got {m.shape}")
             out = m.astype(np.float32, copy=False)
         elif m.ndim == 3:
-            if m.shape[1:] != (Y, Z):
-                raise ValueError(f"{name} (C,Y,Z) must match (Y,Z)={(Y,Z)}, got {m.shape}")
-            out = np.nanmean(m.astype(np.float32, copy=False), axis=0)  # average over C → (Y,Z)
+            if m.shape[1:] != (Z,Y):
+                raise ValueError(f"{name} (C,Z,Y) must match (Z,Y)={(Z,Y)}, got {m.shape}")
+            out = np.nanmean(m.astype(np.float32, copy=False), axis=0)  # average over C → (Z,Y)
         else:
-            raise ValueError(f"{name} must be (Y,Z) or (C,Y,Z); got {m.shape}")
+            raise ValueError(f"{name} must be (Z,Y) or (C,Z,Y); got {m.shape}")
 
         # Optional normalization by interior max (like your 100:-100 crop logic)
         if center_crop > 0:
             y0, y1 = center_crop, max(center_crop, Y - center_crop)
             z0, z1 = center_crop, max(center_crop, Z - center_crop)
             if y1 > y0 and z1 > z0:
-                denom = float(np.nanmax(out[y0:y1, z0:z1]))
+                denom = float(np.nanmax(out[z0:z1, y0:y1]))
                 if denom > 0:
                     out = _safe_div(out, denom)
         return out
 
-    ff = to_yz(ff_cyz, "ff_cyz")
-    pat = to_yz(pattern_cyz, "pattern_cyz")
+    ff = to_zy(ff_czy, "ff_czy")
+    pat = to_zy(pattern_czy, "pattern_czy")
 
     # keep non-negatives (BG-subtracted data can dip slightly below 0)
-    np.maximum(img, 0, out=img)
+    #np.maximum(img, 0, out=img)
 
     out = np.empty_like(img, dtype=np.float32)
 
     # FAST PATH: try full-broadcast in one go
     try:
-        out = _safe_div(_safe_div(img, ff), pat)  # broadcasts (Y,Z) over X
+        out = _safe_div(_safe_div(img, ff), pat)  # broadcasts (Z,Y)) over X
     except MemoryError:
         # FALLBACK: chunk along X to reduce peak memory
         if chunk_x is None:
@@ -197,7 +197,7 @@ def laser_correction_colors(input_location, output_location, ff_cyz, pattern_cyz
 
         for i in range(0, X, chunk_x):
             j = min(i + chunk_x, X)
-            block = img[i:j]  # (x, Y, Z) view
+            block = img[i:j]  # (x, Z, Y)) view
             block = _safe_div(_safe_div(block, ff), pat)
             out[i:j] = block
 
@@ -219,8 +219,8 @@ def laser_correction_colors(input_location, output_location, ff_cyz, pattern_cyz
 
 def split_color_channels(input_location, output_location, center_pos=None):
     """
-    Splits a 3D image splitter input (X,Y,Z) into 4 cropped channels.
-    Returns a 4D array with shape (C=4, X, Yc, Zc) cropped to common (Yc,Zc)
+    Splits a 3D image splitter input (X,Z,Y) into 4 cropped channels.
+    Returns a 4D array with shape (C=4, X, Zc, Yc) cropped to common (Zc, Yc)
     """
 
     # data_temp = tifffile.imread(os.path.join(input_location, "bg_subtracted.tif"))
@@ -230,22 +230,22 @@ def split_color_channels(input_location, output_location, center_pos=None):
         print("Colors already split previously")
         return
 
-    print("Splitting color channels on (Y,Z) axes...")
-    vol = read_omehans(os.path.join(input_location, "omehans")).compute().astype(np.float32)  # (X,Y,Z)
-    X, Y, Z = vol.shape
-    cy = center_pos[0] if center_pos else Y // 2
-    cz = center_pos[1] if center_pos else Z // 2
+    print("Splitting color channels on (Z,Y) axes...")
+    vol = read_omehans(os.path.join(input_location, "omehans")).compute().astype(np.float32)  # (X,Z,Y)
+    X, Z, Y = vol.shape
+    cz = center_pos[0] if center_pos else Z // 2
+    cy = center_pos[1] if center_pos else Y // 2
 
-    ch1 = vol[:, :cy, :cz]   # top-left in (Y,Z)
-    ch2 = vol[:, cy:, :cz]
-    ch3 = vol[:, :cy, cz:]
-    ch4 = vol[:, cy:, cz:]
+    ch1 = vol[:, :cz, :cy]   # top-left in (Z,Y)
+    ch2 = vol[:, cz:, :cy]
+    ch3 = vol[:, :cz, cy:]
+    ch4 = vol[:, cz:, cy:]
 
-    # crop to common min size along Y/Z
-    Yc = min(ch1.shape[1], ch2.shape[1], ch3.shape[1], ch4.shape[1])
-    Zc = min(ch1.shape[2], ch2.shape[2], ch3.shape[2], ch4.shape[2])
-    chs = [c[:, :Yc, :Zc] for c in (ch1, ch2, ch3, ch4)]
-    out = np.stack(chs, axis=0)  # (4, X, Yc, Zc)
+    # crop to common min size along Z/Y
+    Zc = min(ch1.shape[1], ch2.shape[1], ch3.shape[1], ch4.shape[1])
+    Yc = min(ch1.shape[2], ch2.shape[2], ch3.shape[2], ch4.shape[2])
+    chs = [c[:, :Zc, :Yc] for c in (ch1, ch2, ch3, ch4)]
+    out = np.stack(chs, axis=0)  # (4, X, Zc, Yc)
 
     """
     data_temp_zarray = read_omehans(os.path.join(input_location, "omehans"))
@@ -285,7 +285,7 @@ def split_color_channels(input_location, output_location, center_pos=None):
     except zarr.errors.ContainsArrayError:
         print(".omehans already exists")
     write_zarr(os.path.join(output_location, "zarr"), _clip16(out))
-    print("Saved color split (C=4, X, Y, Z)")
+    print("Saved color split (C=4, X, Z, Y)")
 
 
 ##############################################################################
@@ -319,6 +319,40 @@ def register_channel_stack_kornia(stack_zyx, transform_matrix, device="cuda", ba
         out[i:j] = warped.squeeze(1).cpu().numpy()
 
     return np.transpose(out, (1, 2, 0))  # (Z,Y,X)
+
+def warp_stack_xzy_kornia(stack_xzy, M_pix, *, device="cuda", batch_size=128):
+    """
+    stack_xzy: np.ndarray float/uint16 etc. shape (X, Z, Y)
+    M_pix    : 3x3 (or 2x3) affine in pixel coords; applied to each (Z,Y) slice
+    returns  : np.float32 (X, Z, Y)
+    """
+    if not isinstance(stack_xzy, np.ndarray):
+        stack_xzy = np.asarray(stack_xzy)
+
+    X, Z, Y = stack_xzy.shape
+    out = np.empty((X, Z, Y), dtype=np.float32)
+
+    # 2x3 for kornia
+    M = np.asarray(M_pix, dtype=np.float32)
+    if M.shape == (3, 3):
+        M = M[:2, :]
+    elif M.shape != (2, 3):
+        raise ValueError(f"Expected 2x3 or 3x3, got {M.shape}")
+
+    dev = "cuda" if (device == "cuda" and torch.cuda.is_available()) else "cpu"
+    M_t = torch.tensor(M, dtype=torch.float32, device=dev)
+
+    for i in range(0, X, batch_size):
+        j = min(i + batch_size, X)
+        # (B,1,H,W) with H=Z, W=Y
+        batch = torch.from_numpy(stack_xzy[i:j]).to(dev).unsqueeze(1).float()  # (B,1,Z,Y)
+        Mb = M_t.unsqueeze(0).repeat(j - i, 1, 1)                               # (B,2,3)
+        warped = kornia.geometry.transform.warp_affine(
+            batch, Mb, dsize=(Z, Y), align_corners=False
+        )
+        out[i:j] = warped.squeeze(1).cpu().numpy()
+
+    return out
 
 # === INPUT DATA ===
 # Assume the following variables are loaded:
@@ -494,11 +528,12 @@ def parse_A2D_list(transforms_mat) -> list:
 
     return mats
 
-def register_channels_xyz(nuclei_xyz_location, colors_cxyz_location, output_location, transforms, device="cuda", batch_size=128):
+def register_channels_xzy(nuclei_xzy_location, colors_cxzy_location, output_location, transforms, device="cuda", batch_size=128):
     """
-    nuclei_xyz:  (X,Y,Z)
-    colors_cxyz: (C,X,Y,Z)
-    returns volReg_czyx to keep downstream unmixing unchanged
+    nuclei_xzy : (X,Z,Y)
+    colors_cxzy: (C,X,Z,Y)
+    A2D_list   : list of 3x3 affines, length >= 5 (one per output channel)
+    returns    : (5, X, Z, Y) float32
     """
     # skip if already written
     out_root = os.path.join(output_location, "omehans")
@@ -513,12 +548,12 @@ def register_channels_xyz(nuclei_xyz_location, colors_cxyz_location, output_loca
     nuclei_xyz = read_omehans(os.path.join(nuclei_xyz_location, "omehans")).compute()
     colors_cxyz = read_omehans(os.path.join(colors_cxyz_location, "omehans")).compute()
 
-    C, Xc, Yc, Zc = colors_cxyz.shape
+    C, Xc, Zc, Yc = colors_cxzy.shape
     # resize nuclei to (Xc,Yc,Zc)
-    nuc_res_xyz = resize(nuclei_xyz, (Xc, Yc, Zc), order=1, preserve_range=True, anti_aliasing=True).astype(np.float32)
+    nuc_res_xzy = resize(nuclei_xzy, (Xc, Zc, Yc), order=1, preserve_range=True, anti_aliasing=True).astype(np.float32)
 
     # build output as (5, Z, Y, X) to match your unmixing later
-    volReg = np.zeros((5, Zc, Yc, Xc), dtype=np.float32)
+    volReg = np.zeros((5, Xc, Zc, Yc), dtype=np.float32)
 
     for ch in range(5):
         print(f"Registering ch {ch}")
@@ -527,18 +562,15 @@ def register_channels_xyz(nuclei_xyz_location, colors_cxyz_location, output_loca
         A2D = transforms[ch]
 
         if ch == 0:
-            # your 180° rotate on (Y,Z) plane – do it vectorized on XYZ:
-            stack_xyz = np.rot90(nuc_res_xyz, k=2, axes=(1,2)).copy()  # rotate in (Y,Z)
+            # your 180° rotate on (Z,Y) plane – do it vectorized on XZY:
+            stack_xzy = np.rot90(nuc_res_xzy, k=2, axes=(1,2)).copy()  # rotate in (Z,Y)
+            warped_xzy = stack_xzy
         else:
-            stack_xyz = colors_cxyz[ch-1]
+            stack_xzy = colors_cxzy[ch-1]
+            warped_xzy = warp_stack_kornia_xzy(stack_xzy, A2D, device=device, batch_size=batch_size)
 
-        if ch == 0:
-            warped_xyz = stack_xyz  # if nuclei need no affine warp
-        else:
-            warped_xyz = register_channel_stack_kornia_xyz(stack_xyz, A2D, device=device, batch_size=batch_size)
-
-        # move to (Z,Y,X) for downstream consistency
         volReg[ch] = warped_xyz.transpose(2,1,0)
+        #volReg[ch] = warped_xzy
 
     # Save
     try:
@@ -671,19 +703,19 @@ Flch_rel = Flch.copy()
 Flch_rel = Flch_rel / np.sum(Flch_rel, axis=1, keepdims=True) # Normalize along columns - so each entry (i,j) is the percentage of the signal in channel j coming from fluorophore i
 M_inv = np.linalg.inv(Flch_rel)
 
-def preprocess_nuclei(spool_file, nuclei_location_xyz):
+def preprocess_nuclei(spool_file, nuclei_location_xzy):
     """
-    nuclei_location_xyz: folder with nuclei omehans (XYZ layout)
-    Returns path to laser-corrected nuclei (XYZ) folder.
+    nuclei_location_xzy: folder with nuclei omehans (XZY layout)
+    Returns path to laser-corrected nuclei (XZY) folder.
     """
     base = Path(nuclei_location_xyz)
     bg_sub = base.with_name(base.name + "_bg_subtracted")
     bg_sub.mkdir(parents=True, exist_ok=True)
 
-    # BG subtraction (XYZ vol, YZ mask)
+    # BG subtraction (XZY vol, ZY mask)
     subtract_background(str(base), str(bg_sub), corr_BG_nuclei)
 
-    # Laser correction (FF + pattern; both YZ)
+    # Laser correction (FF + pattern; both ZY)
     laser_corr = base.with_name(base.name + "_laser_corrected")
     laser_corr.mkdir(parents=True, exist_ok=True)
     laser_correction_nuclei(
@@ -695,20 +727,20 @@ def preprocess_nuclei(spool_file, nuclei_location_xyz):
     return str(laser_corr)
 
 
-def preprocess_colors(spool_file, colors_location_xyz, nuclei_preprocessed_location):
+def preprocess_colors(spool_file, colors_location_xzy, nuclei_preprocessed_location):
     """
-    colors_location_xyz: folder with *color* OME-HANS at colors_location_xyz/omehans (XYZ).
+    colors_location_xyz: folder with *color* OME-HANS at colors_location_xyz/omehans (XZY).
     nuclei_preprocessed_location: output of preprocess_nuclei(...), used for registration.
     Returns path to unmixed colors.
     """
     base = Path(colors_location_xyz)
 
-    # 1) BG subtraction on raw *colors* XYZ
+    # 1) BG subtraction on raw *colors* XZY
     bg_sub = base.with_name(base.name + "_bg_subtracted")
     bg_sub.mkdir(parents=True, exist_ok=True)
     subtract_background(str(base), str(bg_sub), corr_BG_colors)
 
-    # 2) LASER CORRECTION on full XYZ (single YZ mask for the whole chip → applies to all 4 quadrants)
+    # 2) LASER CORRECTION on full XZY (single YZ mask for the whole chip → applies to all 4 quadrants)
     color_lcorr = base.with_name(base.name + "_laser_corrected")
     color_lcorr.mkdir(parents=True, exist_ok=True)
     laser_correction_colors(
@@ -718,7 +750,7 @@ def preprocess_colors(spool_file, colors_location_xyz, nuclei_preprocessed_locat
         laser_correction_Colors_pattern
     )
 
-    # 3) COLOR SPLIT (after correction) → (C=4, X, Yc, Zc)
+    # 3) COLOR SPLIT (after correction) → (C=4, X, Zc, Yc)
     #    Use MATLAB-provided center if present.
     transforms = sio.loadmat(
         '/bil/proj/rf1hillman/2025_06_26_NPBB328_surface_processingMatlabCode_SLURM/NPBB328_colorMerge_transforms.mat',
@@ -727,7 +759,7 @@ def preprocess_colors(spool_file, colors_location_xyz, nuclei_preprocessed_locat
 
     center = transforms.get('CenterSplitPosition', None)
     if center is not None and isinstance(center, (list, tuple, np.ndarray)) and len(center) >= 2:
-        center_pos = (int(center[0]), int(center[1]))  # (Y, Z)
+        center_pos = (int(center[0]), int(center[1]))  # (Z, Y)
     else:
         center_pos = None
 
@@ -735,15 +767,15 @@ def preprocess_colors(spool_file, colors_location_xyz, nuclei_preprocessed_locat
     color_split.mkdir(parents=True, exist_ok=True)
     split_color_channels(str(color_lcorr), str(color_split), center_pos=center_pos)
 
-    # 4) REGISTRATION: nuclei (XYZ, preprocessed) + colors (CXYZ) → write (5,Z,Y,X) into *_registered
+    # 4) REGISTRATION: nuclei (XZY, preprocessed) + colors (CXZY) → write (5,X,Z,Y) into *_registered
     registered = base.with_name(base.name + "_registered")
     registered.mkdir(parents=True, exist_ok=True)
 
     A2D_list = parse_A2D_list(transforms) 
 
-    volReg = register_channels_xyz(
-        nuclei_xyz_location=str(nuclei_preprocessed_location),  # expects omehans inside
-        colors_cxyz_location=str(color_split),                  # expects omehans inside
+    volReg = register_channels_xzy(
+        nuclei_xzy_location=str(nuclei_preprocessed_location),  # expects omehans inside
+        colors_cxzy_location=str(color_split),                  # expects omehans inside
         output_location=str(registered),
         transforms=A2D_list,
         device="cuda",
