@@ -2,8 +2,9 @@ import os
 
 import zarr
 
-# from holis_tools.hicam_utils import send_hicam_to_zarr_par_read_once
-from holis_pipeline.preprocessing_functions import send_hicam_to_zarr_par_read_once
+# from holis_pipeline.preprocessing_functions import send_hicam_to_zarr_par_read_once  # without z-standard compression (.fli)
+from holis_pipeline.hicam_utils import send_hicam_to_zarr_par_read_once  # with z-standard compression (.zst)
+
 
 
 def read_fli_as_zarr(path_to_fli, output_location):
