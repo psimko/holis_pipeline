@@ -40,7 +40,7 @@ import sys
 import time
 from datetime import datetime
 from glob import glob
-import argparse
+#import argparse
 
 import tifffile
 import numpy as np
@@ -60,80 +60,66 @@ from holis_pipeline.read_data import read_fli_as_zarr
 from holis_pipeline.detect_nuclei import detect_cells_slurm
 from holis_pipeline.utils.create_masks import get_chunks_with_bright_signal, get_chunks_with_background
 from holis_pipeline.preprocess_v2_sep2025 import preprocess_nuclei, preprocess_colors # , unmix_data, nuclei_color_registration
-from holis_pipeline.utils.create_folders import create_folders
+#from holis_pipeline.utils.create_folders import create_folders
 from holis_pipeline.unchunk_data import combine_masks, remove_chunking_artifacts, combine_centroids_csv, extract_coords, combine_spectral_info_csv
 from holis_pipeline.extract_spectral_info import get_spectral_info_slurm
+from holis_pipeline.preprocessing_functions import setup_logging, infer_z, infer_laser_nm, EXC_RE
 
 
-"""
-TODO:
-command-line arguments - Inputs (colors, nuclei) and output
-"""
+#def run_pipeline(nuclei_fli: str, output_dir: str):
+
+os.umask(0o007)
+
+NUCLEI_FLI = sys.argv[1] #nuclei_fli                  #/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/NPBB328-Cortex-Slab06-run002-z01-y001-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli.zst
+OUTPUT_DIR = sys.argv[2] #output_dir                  #/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_processed/NPBB328-Cortex-Slab06-run002-z01-y001-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli
 
 
-def run_pipeline(nuclei_fli: str, output_dir: str):
+if not os.path.exists(OUTPUT_DIR):
+    os.makedirs(OUTPUT_DIR)
 
-    os.umask(0o006)
+#output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')  # TODO: do we need scale? Will it always be full resolution?
 
-    NUCLEI_FLI = nuclei_fli
-    # COLORS_FLI = sys.argv[2]
-    OUTPUT_DIR = output_dir
+COLORS_FLI = NUCLEI_FLI.replace('272.fli.zst', '088.fli.zst')
 
-    if not os.path.exists(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
 
-    output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')  # TODO: do we need scale? Will it always be full resolution?
-
-    COLORS_FLI = NUCLEI_FLI.replace('272.fli', '088.fli')
-
-    JOBS_DIR = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'slurm_jobs')
-    DETECTION_DIR = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'detection')
-    SPECTRAL_INFO_DIR = os.path.join(OUTPUT_DIR, f'scale_{SCALE}', 'spectral_info')
-
-    work_dir = os.getcwd()
-    print("Working directory: ", work_dir)
-
-    file_handler = logging.FileHandler(
-        os.path.join(
-            OUTPUT_DIR,
-            "holis_pipeline_log_{}.txt".format(
-                datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
-            )
-        )
-    )
-
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(name)s - %(levelname)s - %(message)s',
-        handlers=[file_handler]
-    )
-
-    log = logging.getLogger(__name__)
-
+def main():
     # Log the start time
     tstart = datetime.now()
     log.info(f"START TIME: {tstart}")
-    create_folders(OUTPUT_DIR)
+    #create_folders(OUTPUT_DIR)
 
-    # Read data to zarr
-    log.info("Reading data")
-    NUCLEI_DIR = read_fli_as_zarr(NUCLEI_FLI, os.path.join(OUTPUT_DIR, os.path.basename(NUCLEI_FLI)))
-    log.info("Read nuclei channel")
-    COLORS_DIR = read_fli_as_zarr(COLORS_FLI, os.path.join(OUTPUT_DIR, os.path.basename(COLORS_FLI)))
-    log.info("Read color channels")
+    # Read data to zarr - this might have already been done
+    #log.info("Reading data")
+    #NUCLEI_DIR = read_fli_as_zarr(NUCLEI_FLI, os.path.join(OUTPUT_DIR, os.path.basename(NUCLEI_FLI)))
+    #log.info("Read nuclei channel")
+    #COLORS_DIR = read_fli_as_zarr(COLORS_FLI, os.path.join(OUTPUT_DIR, os.path.basename(COLORS_FLI)))
+    #log.info("Read color channels")
 
-    # === Preprocess ===
-    print("Preprocessing nuclei… (BG → laser-correct)")
-    NUCLEI_PREP = preprocess_nuclei(NUCLEI_FLI, NUCLEI_DIR)
-    print("Nuclei preprocessed at:", NUCLEI_PREP)
+    NUCLEI_OUT = os.path.join(OUTPUT_DIR, os.path.basename(NUCLEI_FLI)) # path to the scan output directory named using its name
+    COLORS_OUT = os.path.join(OUTPUT_DIR, os.path.basename(COLORS_FLI))
 
-    print("Preprocessing colors… (BG → laser-correct → split → register → unmix)")
-    COLORS_UNMIXED = preprocess_colors(COLORS_FLI, COLORS_DIR, NUCLEI_PREP)
-    print("Colors unmixed at:", COLORS_UNMIXED)
+    #################################################################################################
+    # Run preprocessing
+    ################################################################################################# 
+
+    if os.path.isdir(NUCLEI_OUT):
+        log.info(f"Nuclei processed already present at {NUCLEI_OUT}, skipping read.")
+        NUCLEI_PROCESSED = NUCLEI_OUT
+    else:
+        NUCLEI_PROCESSED = preprocess_nuclei(NUCLEI_FLI, NUCLEI_OUT)
+        log.info(f"Preprocessing nuclei (BG → laser-correct) to {NUCLEI_PROCESSED}")
+
+    if os.path.isdir(COLORS_OUT):
+        log.info(f"Colors processed already present at {COLORS_OUT}, skipping read.")
+        COLORS_PROCESSED = COLORS_OUT
+    else:
+        COLORS_PROCESSED = preprocess_colors(COLORS_FLI, COLORS_OUT, NUCLEI_PROCESSED)
+        log.info(f"Preprocessing colors (BG → laser-correct → split → register → unmix) to {COLORS_PROCESSED}")
+
 
     log.info("Preprocessing stages complete.")
-    log.info(f"NUCLEI_PREP:  {NUCLEI_PREP}")
-    log.info(f"COLORS_UNMIXED: {COLORS_UNMIXED}")
+    log.info(f"NUCLEI_PROCESSED:  {NUCLEI_PROCESSED}")
+    log.info(f"COLORS_PROCESSED: {COLORS_PROCESSED }")
     log.info(f"TOTAL TIME: {datetime.now() - tstart}")
 
 
@@ -264,4 +250,12 @@ def run_pipeline(nuclei_fli: str, output_dir: str):
     log.info("All Done!")
 
 
-""" 
+"""
+
+if __name__ == "__main__":
+    log = setup_logging(OUTPUT_DIR)
+    try:
+        main()
+    except Exception:
+        log.exception("Unhandled exception")
+        raise

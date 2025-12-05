@@ -224,8 +224,7 @@ def laser_correction_nuclei(input_location, output_location):
     # you're computing how much each laser's pattern contributes to the nuclei fluor
     # output is a 1 x (z x y) matrix
     sLCN = laser_correction_Nuc.shape
-    laser_correction_ch_Nuc = np.dot(excitation_efficiency[0, :],
-                                     laser_correction_Nuc.reshape((sLCN[0], sLCN[1] * sLCN[2])))
+    laser_correction_ch_Nuc = np.dot(excitation_efficiency[0, :], laser_correction_Nuc.reshape((sLCN[0], sLCN[1] * sLCN[2])))
 
     # 3. Multiply (dot product) by the first column of the fluorescence matrix (that's the distribution of fluors in the nuclear channel)
     # you're computing how much of the laser pattern comes from which fluor (see comment)

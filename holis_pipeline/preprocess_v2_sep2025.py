@@ -1,6 +1,7 @@
 import os
 import sys
 from glob import glob
+import re
 
 import dask.array as da
 import numpy as np
@@ -13,11 +14,13 @@ import scipy.io as sio
 from pathlib import Path
 from typing import Optional
 from tqdm import tqdm
+import cv2
+import pickle
 
 from holis_pipeline import settings
-from holis_pipeline.preprocessing_functions import read_data_file
+from holis_pipeline.preprocessing_functions import read_data_file, infer_z, infer_laser_nm, EXC_RE
 from holis_pipeline.read_data import read_fli_as_zarr
-from holis_pipeline.utils.zarr_related import read_omehans, write_omehans, write_zarr
+from holis_pipeline.utils.zarr_related import read_omehans, write_omehans, write_zarr, write_omehans_from_dask
 
 
 ##############################################################################
@@ -26,14 +29,14 @@ from holis_pipeline.utils.zarr_related import read_omehans, write_omehans, write
 
 # These should be global constants
 
-correction_path = "/bil/proj/rf1hillman/results/2025_06_15_NPBB328_surface_corrections/"
+#correction_path = "/bil/proj/rf1hillman/results/2025_06_15_NPBB328_surface_corrections/"
 
-corr_BG_nuclei = np.load(correction_path + "Corr_BG_nuclei.npy")
-corr_BG_colors = np.load(correction_path + "Corr_BG_colors.npy")
-ff_nuclei_norm = np.load(correction_path + "FF_nuc_norm.npy")
-ff_colors_norm = np.load(correction_path + "FF_colors_norm.npy")
-laser_correction_Nuclei_pattern = np.load(correction_path + "Laser_correction_Nuclei_pattern.npy")
-laser_correction_Colors_pattern = np.load(correction_path + "Laser_correction_Colors_pattern.npy")
+#corr_BG_nuclei = np.load(correction_path + "Corr_BG_nuclei.npy")
+#corr_BG_colors = np.load(correction_path + "Corr_BG_colors.npy")
+#ff_nuclei_norm = np.load(correction_path + "FF_nuc_norm.npy")
+#ff_colors_norm = np.load(correction_path + "FF_colors_norm.npy")
+#laser_correction_Nuclei_pattern = np.load(correction_path + "Laser_correction_Nuclei_pattern.npy")
+#laser_correction_Colors_pattern = np.load(correction_path + "Laser_correction_Colors_pattern.npy")
 
 ##############################################################################
 #### Background and laser pattern correction functions
@@ -58,29 +61,38 @@ def subtract_background(input_location, output_location, bg_zy: np.ndarray):
         return
 
     print("Subtracting BG...")
-    vol_xzy = read_omehans(input_location).compute().astype(np.float32)  # (X,Z,Y)
+
+    #####################
+    # Numpy version
+    #vol_xzy = read_omehans(input_location).compute().astype(np.float32)  # (X,Z,Y)
+    #X, Z, Y = vol_xzy.shape
+    #if bg_zy.shape != (Z, Y):
+    #    raise ValueError(f"BG mask must be (Z,Y)={Z,Y}, got {bg_yz.shape}")
+    #bg = bg_zy.astype(np.float32) - 1024.0  # your original -1024
+    #out = vol_xzy - bg  # broadcast over X
+    #np.maximum(out, 0, out)
+    #####################    
+
+    #####################
+    # Dask version
+    vol_xzy = read_omehans(input_location).astype('float32')  # (X,Z,Y)
     X, Z, Y = vol_xzy.shape
-
-    # Optional save of the original image
-    # tifffile.imwrite(os.path.join(output_location, "original.tif"), img.astype('uint16'))
-    #write_zarr(os.path.join(output_location, 'original_zarr'), img.astype('uint16'))
-
     if bg_zy.shape != (Z, Y):
-        raise ValueError(f"BG mask must be (Z,Y)={Z,Y}, got {bg_yz.shape}")
-
-    bg = bg_zy.astype(np.float32) - 1024.0  # your original -1024
-    out = vol_xzy - bg  # broadcast over X
-    np.maximum(out, 0, out)
+        raise ValueError(f"BG mask must be (Z,Y)={Z,Y}, got {bg_zy.shape}")
+    bg_zy_d = da.from_array(bg_zy, chunks=(vol_xzy.chunks[1], vol_xzy.chunks[2])).astype('float32') #- 1024.0
+    out = da.maximum(vol_xzy.astype('float32') - bg_zy_d[None, :, :], 0)
+    #####################
 
     # Save
     try:
-        write_omehans(omehans_root, _clip16(out))
+        #write_omehans(omehans_root, _clip16(out))           #Use when using numpy version
+        write_omehans_from_dask(omehans_root, da.clip(out, 0, 65535).astype('uint16')) 
     except zarr.errors.ContainsArrayError:
         print(".omehans array already exists")
-    try:
-        write_zarr(os.path.join(output_location, 'zarr'), _clip16(out))
-    except zarr.errors.ContainsArrayError:
-        print(".zarr array already exists")
+    #try:
+    #    write_zarr(os.path.join(output_location, 'zarr'), _clip16(out))
+    #except zarr.errors.ContainsArrayError:
+    #    print(".zarr array already exists")
 
     # tifffile.imwrite(os.path.join(output_location, "bg_subtracted.tif"), image_np_array_bgSubtracted.astype('uint16'))
 
@@ -90,7 +102,7 @@ def subtract_background(input_location, output_location, bg_zy: np.ndarray):
 
 
 
-def laser_correction_nuclei(input_location, output_location, ff_zy, pattern_zy):
+def laser_correction_nuclei(input_location, output_location, pattern_zy):
     """
     Input:
         - flattened .omehans (X,Z,Y)
@@ -99,49 +111,103 @@ def laser_correction_nuclei(input_location, output_location, ff_zy, pattern_zy):
         - mixing (fluorescence) matrix (n_fluorophores, n_channels) - (5x5) - first column for nuclei
     Output: corrected .omehans the same shape as input
     """
-    #data = tifffile.imread(os.path.join(input_location, "bg_subtracted.tif"))
 
     root = os.path.join(output_location, 'omehans')
     if os.path.exists(os.path.join(root, '0', '0', '0')):
         print("Laser pattern corrected (nuclei) previously")
         return
 
-    print("Laser correction (nuclei): XZY vol ÷ ZY FF ÷ ZY pattern")
+    print("Laser correction (nuclei): XZY vol ÷ ZY pattern")
     img = read_omehans(os.path.join(input_location, "omehans")).compute().astype(np.float32)  # (X,Z,Y)
     X, Z, Y = img.shape
-    if ff_zy.shape != (Z, Y) or pattern_zy.shape != (Z, Y):
-        raise ValueError("FF and pattern must be (Z,Y)")
+    #if ff_zy.shape != (Z, Y) or pattern_zy.shape != (Z, Y):
+    #    raise ValueError("FF and pattern must be (Z,Y)")
 
-    ff = ff_zy.astype(np.float32)
+    #ff = ff_zy.astype(np.float32)
     pat = pattern_zy.astype(np.float32)
 
-    ff_corr = _safe_div(img, ff)
-    corr = _safe_div(ff_corr, pat)
+    #ff_corr = _safe_div(img, ff)
+    #corr = _safe_div(ff_corr, pat)
+    corr = _safe_div(img, pat)
 
     # Save
     try:
         write_omehans(root, _clip16(corr))
     except zarr.errors.ContainsArrayError:
         print(".omehans already exists")
-    try:
-        write_zarr(os.path.join(output_location, 'zarr'), _clip16(corr))
-    except zarr.errors.ContainsArrayError:
-        print(".zarr already exists")
+    #try:
+    #    write_zarr(os.path.join(output_location, 'zarr'), _clip16(corr))
+    #except zarr.errors.ContainsArrayError:
+    #    print(".zarr already exists")
     #tifffile.imwrite(os.path.join(output_location, 'laser_corrected.tif'), np.round(corrected_data).astype('uint16'))
     print("Saved laser-pattern-corrected (nuclei) file")
 
+def laser_correction_colors(input_location, output_location, pattern_czy, center_pos=None):
+    """
+    Laser correction for color splitter data.
+
+    input_location:  folder with raw colors 'omehans' (X,Z,Y)
+    output_location: where corrected 4-channel omehans will be written
+    pattern_czy:     np.ndarray of shape (C=4, Zc, Yc) final mixed patterns
+    center_pos:      (cz, cy) in (Z,Y); if None, use midpoints
+    """
+
+    root = os.path.join(output_location, "omehans")
+    # if corrected already present, skip
+    if os.path.exists(os.path.join(root, "0", "0", "0")):
+        print("Laser pattern corrected (colors) previously")
+        return
+
+    print("Laser correction (colors): split (X,Z,Y) -> (C,X,Zc,Yc) and divide by (C,Zc,Yc) pattern")
+
+    # 1) load raw splitter volume (X,Z,Y)
+    vol = read_omehans(os.path.join(input_location, "omehans")).compute().astype(np.float32)
+    X, Z, Y = vol.shape
+
+    # 2) split into 4 quadrants in (Z,Y), same as your split_color_channels
+    if center_pos is not None:
+        cz, cy = int(center_pos[0]), int(center_pos[1])
+    else:
+        cz, cy = Z // 2, Y // 2
+
+    ch1 = vol[:, :cz, :cy]
+    ch2 = vol[:, cz:, :cy]
+    ch3 = vol[:, :cz, cy:]
+    ch4 = vol[:, cz:, cy:]
+
+    # crop to common min size along Z/Y
+    Zc = min(ch1.shape[1], ch2.shape[1], ch3.shape[1], ch4.shape[1])
+    Yc = min(ch1.shape[2], ch2.shape[2], ch3.shape[2], ch4.shape[2])
+    chs = [c[:, :Zc, :Yc] for c in (ch1, ch2, ch3, ch4)]
+    # (4, X, Zc, Yc)
+    colors_cxzy = np.stack(chs, axis=0).astype(np.float32)
+
+    # 3) check pattern and divide
+    pat = np.asarray(pattern_czy, dtype=np.float32)
+    if pat.ndim != 3 or pat.shape[0] != colors_cxzy.shape[0] or pat.shape[1:] != (Zc, Yc):
+        raise ValueError(
+            f"pattern_czy must be (C,Zc,Yc) matching split volume; "
+            f"got {pat.shape}, expected ({colors_cxzy.shape[0]},{Zc},{Yc})"
+        )
+
+    # broadcast pattern over X: (C,1,Zc,Yc) → (C,X,Zc,Yc)
+    pat_cxzy = pat[:, None, :, :]
+    corr = _safe_div(colors_cxzy, pat_cxzy)  # same helper as nuclei
+
+    # 4) save corrected 4-channel omehans
+    try:
+        write_omehans(root, _clip16(corr))   # corr shape (4,X,Zc,Yc)
+    except zarr.errors.ContainsArrayError:
+        print(".omehans already exists (colors, corrected)")
+
+    # optional zarr, like in split_color_channels
+    #write_zarr(os.path.join(output_location, "zarr"), _clip16(corr))
+
+    print("Saved laser-pattern-corrected colors (C=4, X, Zc, Yc)")
 
 
-def laser_correction_colors(input_location, output_location, ff_czy, pattern_czy, chunk_x: Optional[int] = None, target_bytes: int = 512 * 1024 * 1024, center_crop: int = 100,):
-    """
-    Input:
-        - flattened .omehans (X,Z,Y)
-        - ff correction (Z,Y)
-        - laser pattern matrix (Z,Y)
-        - absorption matrix (n_fluorophores, n_lasers) - (5x4) - first row   for nuclei
-        - mixing (fluorescence) matrix (n_fluorophores, n_channels) - (5x5) - first column for nuclei
-    Output: corrected .omehans the same shape as input
-    """
+
+""" def laser_correction_colors(input_location, output_location, pattern_czy, chunk_x: Optional[int] = None, target_bytes: int = 512 * 1024 * 1024, center_crop: int = 100,):
 
     #data = tifffile.imread(os.path.join(input_location, "color_split.tif"))
 
@@ -177,7 +243,7 @@ def laser_correction_colors(input_location, output_location, ff_czy, pattern_czy
                     out = _safe_div(out, denom)
         return out
 
-    ff = to_zy(ff_czy, "ff_czy")
+    #ff = to_zy(ff_czy, "ff_czy")
     pat = to_zy(pattern_czy, "pattern_czy")
 
     # keep non-negatives (BG-subtracted data can dip slightly below 0)
@@ -206,11 +272,12 @@ def laser_correction_colors(input_location, output_location, ff_czy, pattern_czy
         write_omehans(root, _clip16(out))
     except zarr.errors.ContainsArrayError:
         print(".omehans already exists")
-    try:
-        write_zarr(os.path.join(output_location, 'zarr'), _clip16(out))
-    except zarr.errors.ContainsArrayError:
-        print(".zarr already exists")
-    print("Saved laser-pattern-corrected colors")
+    #try:
+    #    write_zarr(os.path.join(output_location, 'zarr'), _clip16(out))
+    #except zarr.errors.ContainsArrayError:
+    #    print(".zarr already exists")
+    print("Saved laser-pattern-corrected colors") """
+
 
 
 ##############################################################################
@@ -280,16 +347,135 @@ def split_color_channels(input_location, output_location, center_pos=None):
 
     # Save
     # tifffile.imwrite(os.path.join(output_location, "color_split.tif"), data_temp)
-    try:
-        write_omehans(root, _clip16(out))
-    except zarr.errors.ContainsArrayError:
-        print(".omehans already exists")
-    write_zarr(os.path.join(output_location, "zarr"), _clip16(out))
-    print("Saved color split (C=4, X, Z, Y)")
+    #try:
+    #    write_omehans(root, _clip16(out))
+    #except zarr.errors.ContainsArrayError:
+    #    print(".omehans already exists")
+    #write_zarr(os.path.join(output_location, "zarr"), _clip16(out))
+    #print("Saved color split (C=4, X, Z, Y)")
+
+    return out
+
+##############################################################################
+
+def split_color_channels_2D_dict(patterns_colors: dict, center_pos):
+    """
+    patterns_colors: {laser: np.ndarray of shape (Z, Y)}
+    center_pos: (cz, cy) splitter center in (Z, Y)
+    returns: {laser: np.ndarray of shape (4, Zc, Yc)} with common (Zc, Yc)
+    """
+    if not patterns_colors:
+        raise ValueError("patterns_colors is empty")
+
+    cz, cy = int(center_pos[0]), int(center_pos[1])
+
+    # First pass: compute per-laser quadrant sizes → global common crop (Zc, Yc)
+    Zc = Yc = None
+    quads_tmp = {}  # {laser: (ch1,ch2,ch3,ch4)}
+    for laser, arr in patterns_colors.items():
+        a = np.asarray(arr, dtype=np.float32)
+        if a.ndim != 2:
+            raise ValueError(f"Laser {laser!r} expected 2D (Z,Y), got {a.shape}")
+
+        # layout to match the matlab code:
+        # ch1: [0:cz, 0:cy], ch2: [0:cz, cy:], ch3: [cz:, 0:cy], ch4: [cz:, cy:]
+        ch1 = a[:cz, :cy]
+        ch2 = a[:cz, cy:]
+        ch3 = a[cz:, :cy]
+        ch4 = a[cz:, cy:]
+        quads = (ch1, ch2, ch3, ch4)
+        quads_tmp[laser] = quads
+
+        zmin = min(q.shape[0] for q in quads)
+        ymin = min(q.shape[1] for q in quads)
+        Zc = zmin if Zc is None else min(Zc, zmin)
+        Yc = ymin if Yc is None else min(Yc, ymin)
+
+    # Second pass: crop all to (Zc, Yc) and stack per laser → (4, Zc, Yc)
+    out = {}
+    for laser, quads in quads_tmp.items():
+        stacked = np.empty((4, Zc, Yc), dtype=np.float32)
+        for c, q in enumerate(quads):
+            stacked[c] = q[:Zc, :Yc]
+        out[laser] = stacked
+
+    return out
+
 
 
 ##############################################################################
 #### Registration functions
+##############################################################################
+
+def apply_affine_2d(img_zy: np.ndarray, A2D: np.ndarray, out_shape_zy) -> np.ndarray:
+    """
+    img_zy: (Z,Y) float32
+    A2D: 3x3 or 2x3 affine matrix (row/col coords). If 3x3, takes top 2 rows.
+    out_shape_zy: (Z, Y)
+    """
+    if A2D.shape == (3, 3):
+        M = A2D[:2, :]
+    elif A2D.shape == (2, 3):
+        M = A2D
+    else:
+        raise ValueError(f"Affine must be 2x3 or 3x3, got {A2D.shape}")
+    Z, Y = out_shape_zy
+    # OpenCV uses (width, height) == (Y, Z)
+    return cv2.warpAffine(img_zy, M, dsize=(Y, Z), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0).astype(np.float32)
+
+def normalize_by_registered_max_dict(
+    patterns_nuclei: dict,           # {laser: (Z,Y) float / uint}
+    patterns_colors: dict,           # {laser: (4,Z,Y) float / uint}
+    transforms: list,                # [T_nuc, T_ch1, T_ch2, T_ch3, T_ch4] each 2x3/3x3
+    FOVcrop: dict                    # {"Z": (top,bottom), "Y": (left,right)}
+):
+    """
+    Returns:
+      nuclei_norm: {laser: (Z,Y) float32}
+      colors_norm: {laser: (4,Zc,Yc) float32}
+    """
+    lasers_n = set(patterns_nuclei.keys())
+    lasers_c = set(patterns_colors.keys())
+    if lasers_n != lasers_c:
+        missing = lasers_n ^ lasers_c
+        raise ValueError(f"Mismatched lasers between nuclei/colors: {missing}")
+    if len(transforms) != 5:
+        raise ValueError("Need 5 transforms: [nuc, ch1, ch2, ch3, ch4].")
+
+    # reference shape
+    _, z0, y0 = next(iter(patterns_colors.values())).shape
+    Ztop, Zbot = FOVcrop["Z"]
+    Yleft, Yright = FOVcrop["Y"]
+    eps = 1e-6
+
+    nuclei_norm, colors_norm, maskRegMax = {}, {}, {}
+
+    for L in patterns_nuclei.keys():
+        nuc = np.asarray(patterns_nuclei[L], dtype=np.float32)
+        col = np.asarray(patterns_colors[L], dtype=np.float32)   # (4,Z,Y)
+        if  col.shape != (4, z0, y0):
+            raise ValueError(f"Laser {L!r} inconsistent shapes: nuc {nuc.shape}, col {col.shape}")
+
+        # 1) register each of the 5 channels
+        reg = np.empty((5, z0, y0), dtype=np.float32)
+        reg[0] = apply_affine_2d(nuc, transforms[0], (z0, y0))
+        for k in range(4):
+            reg[1 + k] = apply_affine_2d(col[k], transforms[1 + k], (z0, y0))
+
+        # 2) crop to eventual FOV
+        reg_c = reg[:, Ztop:z0 - Zbot, Yleft:y0 - Yright]  # (5, Zc, Yc)
+
+        # 3) per-channel max over (Z,Y)
+        ch_max = reg_c.reshape(5, -1).max(axis=1).astype(np.float32)
+        ch_max = np.maximum(ch_max, eps)  # avoid div-by-zero
+        maskRegMax[L] = ch_max
+
+        # 4) normalize the UNregistered originals
+        nuclei_norm[L] = (nuc / ch_max[0]).astype(np.float32, copy=False)
+        colors_norm[L] = (col / ch_max[1:, None, None]).astype(np.float32, copy=False)
+
+    return nuclei_norm, colors_norm
+
 ##############################################################################
 
 import torch
@@ -368,99 +554,6 @@ def register_channel_stack_kornia_xyz(stack_xyz, M_pix, device="cuda", batch_siz
     zyx = stack_xyz.transpose(2,1,0)  # (Z,Y,X)
     zyx_warp = register_channel_stack_kornia(zyx, M_pix, device=device, batch_size=batch_size)  # (Z,Y,X)
     return zyx_warp.transpose(2,1,0)  # back to (X,Y,Z)
-
-""" def register_channels(input_location_nuclei, input_location_colors, output_location, transform_matrix, device="cuda", batch_size=128)
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(device)
-
-    # Load images
-    nuclei_dask_zarray = read_omehans(os.path.join(input_location_nuclei, "omehans"))
-    im_nuclei_corr_zyx = nuclei_dask_zarray.compute()
-
-    colors_dask_zarray = read_omehans(os.path.join(input_location_colors, "omehans"))
-    im_colors_corr_zyx_split = colors_dask_zarray.compute()
-
-    # Downsample im_nuclei_corr_zyx
-
-    # target shape from im_colors_corr_zyx: (Z, Y, X)
-    z, y, x = im_colors_corr_zyx_split.shape[1:]
-    volReg = np.zeros((5, z, y, x), dtype=np.float32)
-    target_shape = im_colors_corr_zyx_split.shape[1:]  # skip channel dim
-    print(f'Target shape is {target_shape}')
-
-    im_nuclei_corr_zyx_rescaled = resize(
-        im_nuclei_corr_zyx,
-        output_shape=target_shape,
-        order=1,              # bilinear interpolation
-        preserve_range=True,  # don't normalize intensity
-        anti_aliasing=True
-    ).astype(np.float32)
-
-    print(f'im_nuclei_corr_zyx_rescaled has shape {im_nuclei_corr_zyx_rescaled.shape}')
-
-
-    print("Transforms structure:", type(transforms['Transforms']), transforms['Transforms'].shape)
-
-    for ch in range(5):
-        print(f"Registering channel {ch}")
-
-        # Extract and convert transform matrix
-        #raw = transforms['Transforms'][0][0][ch]
-
-        print("Transforms type:", type(transforms['Transforms']))
-        print("Transforms shape:", np.shape(transforms['Transforms']))
-        print("Transforms dtype:", transforms['Transforms'].dtype)
-        #print("Transforms content preview:", transforms['Transforms'])
-
-
-        transform_matrix = transforms['Transforms'][0][ch]['A2D'].astype(np.float32)
-
-        print(type(transform_matrix))           # <class 'tuple'>
-        print(type(transform_matrix[0]))        # <class 'numpy.ndarray'>
-        print(transform_matrix[0].shape) 
-
-        print(f'Transform_matrix shape is: {transform_matrix.shape}')
-
-        #M = np.array(raw.toarray() if hasattr(raw, "toarray") else raw).astype(np.float32)
-        M = transform_matrix
-
-        # Get stack to be transformed
-        if ch == 0:
-            #stack = np.rot90(np.rot90(im_nuclei_corr_zyx_rescaled, axes=(0, 1)), axes=(0, 1))  # rotate 180°
-            #stack = np.rot90(im_nuclei_corr_zyx_rescaled, k=2, axes=(0, 1))
-            #stack = np.flip(im_nuclei_corr_zyx_rescaled, axis=(0, 1))
-            #stack = im_nuclei_corr_zyx_rescaled
-            stack = np.zeros_like(im_nuclei_corr_zyx_rescaled)
-            for x in range(im_nuclei_corr_zyx_rescaled.shape[2]):
-                stack[:, :, x] = np.rot90(np.rot90(im_nuclei_corr_zyx_rescaled[:, :, x])).copy()
-            print(f'Stack {ch} shape is {stack.shape}')
-        else:
-            stack = im_colors_corr_zyx_split[ch - 1]
-            print(f'Stack {ch} has shape {stack.shape}')
-
-        # Apply batch warp
-        if ch == 0:
-            registered_stack = stack
-        else:
-            registered_stack = register_channel_stack_kornia(stack, M, device=device)
-        print(f'Registered stack {ch} has shape {registered_stack.shape}')
-        volReg[ch] = registered_stack
-
-    # Save subset of result
-    print('Saving registered volume')
-    #np.save(correction_path + "volReg.npy", volReg[:, :, :, 15000:16000])
-    #tifffile.imwrite(
-    #    correction_path + "volReg.tiff",
-    #    volReg[:, :, :, 15000:16000].astype(np.float32),  # Ensure it's a supported type
-    #    imagej=True  # Optional: if you want ImageJ compatibility
-    #)
-
-    try:
-        write_omehans(os.path.join(output_location, "omehans"), volReg.astype('uint16'))
-    except zarr.errors.ContainsArrayError:
-        print(".omehans array already exists")
-    write_zarr(os.path.join(output_location, "zarr"), volReg.astype('uint16')) """
 
 def _unwrap_obj(x):
     while isinstance(x, np.ndarray) and x.dtype == object and x.size == 1:
@@ -702,55 +795,95 @@ Flch = simulation_matrices['Flch']
 Flch_rel = Flch.copy()
 Flch_rel = Flch_rel / np.sum(Flch_rel, axis=1, keepdims=True) # Normalize along columns - so each entry (i,j) is the percentage of the signal in channel j coming from fluorophore i
 M_inv = np.linalg.inv(Flch_rel)
+#transforms = sio.loadmat(
+#    '/bil/proj/rf1hillman/2025_06_26_NPBB328_surface_processingMatlabCode_SLURM/NPBB328_colorMerge_transforms.mat',
+#    struct_as_record=False, squeeze_me=True
+#)
+#center = transforms.get('CenterSplitPosition', None)
+    
 
-def preprocess_nuclei(spool_file, nuclei_location_xzy):
+
+def preprocess_nuclei(omehans_file, nuclei_location_xzy):
     """
     nuclei_location_xzy: folder with nuclei omehans (XZY layout)
     Returns path to laser-corrected nuclei (XZY) folder.
     """
-    base = Path(nuclei_location_xyz)
+    base = Path(nuclei_location_xzy)
     bg_sub = base.with_name(base.name + "_bg_subtracted")
     bg_sub.mkdir(parents=True, exist_ok=True)
 
     # BG subtraction (XZY vol, ZY mask)
-    subtract_background(str(base), str(bg_sub), corr_BG_nuclei)
+    #Get z and define mask file names
+    base_ome = os.path.basename(omehans_file)  
+    root = os.path.splitext(os.path.splitext(base_ome)[0])[0] 
+    z_str = infer_z(root)
+
+    corr_BG_nuclei = np.load(os.path.join(os.path.split(omehans_file)[0] ,'correction_files',f"bg_nuclei_mask_z{z_str}.npy"))
+    subtract_background(str(omehans_file), str(bg_sub), corr_BG_nuclei)
 
     # Laser correction (FF + pattern; both ZY)
+
+    # Create output folder
     laser_corr = base.with_name(base.name + "_laser_corrected")
     laser_corr.mkdir(parents=True, exist_ok=True)
+
+    # Load pattern
+    pattern_nuclei_path = os.path.join(os.path.split(omehans_file)[0] ,'correction_files', 'laser_patterns', f"laser_pattern_nuclei_mask_z{z_str}_final.npy")
+    laser_correction_Nuclei_pattern = np.load(pattern_nuclei_path)
+    #with open(pattern_nuclei_path , "rb") as f:
+    #    laser_correction_Nuclei_pattern = pickle.load(pattern_nuclei_path, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+    # Apply correction
     laser_correction_nuclei(
         str(bg_sub),
         str(laser_corr),
-        ff_nuclei_norm,
         laser_correction_Nuclei_pattern
     )
     return str(laser_corr)
 
 
-def preprocess_colors(spool_file, colors_location_xzy, nuclei_preprocessed_location):
+def preprocess_colors(omehans_file, colors_location_xzy, nuclei_preprocessed_location):
     """
     colors_location_xyz: folder with *color* OME-HANS at colors_location_xyz/omehans (XZY).
     nuclei_preprocessed_location: output of preprocess_nuclei(...), used for registration.
     Returns path to unmixed colors.
     """
-    base = Path(colors_location_xyz)
+    base = Path(colors_location_xzy)
 
     # 1) BG subtraction on raw *colors* XZY
     bg_sub = base.with_name(base.name + "_bg_subtracted")
     bg_sub.mkdir(parents=True, exist_ok=True)
-    subtract_background(str(base), str(bg_sub), corr_BG_colors)
+    #Get z and define mask file names
+    base_ome = os.path.basename(omehans_file)  
+    root = os.path.splitext(os.path.splitext(base_ome)[0])[0] 
+    z_str = infer_z(root)
+    corr_BG_colors = np.load(os.path.join(os.path.split(omehans_file)[0],'correction_files',f"bg_colors_mask_z{z_str}.npy"))
+    subtract_background(str(omehans_file), str(bg_sub), corr_BG_colors)
 
     # 2) LASER CORRECTION on full XZY (single YZ mask for the whole chip → applies to all 4 quadrants)
     color_lcorr = base.with_name(base.name + "_laser_corrected")
     color_lcorr.mkdir(parents=True, exist_ok=True)
+
+    # Load pattern
+    pattern_colors_path = os.path.join(os.path.split(omehans_file)[0] ,'correction_files', 'laser_patterns', f"laser_pattern_colors_mask_z{z_str}_final.npy")
+    laser_correction_Colors_pattern = np.load(pattern_colors_path)
+    #with open(pattern_colors_path , "rb") as f:
+    #    laser_correction_Colors_pattern = pickle.load(pattern_colors_path, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    transforms = sio.loadmat("/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Matlab_info/NPBB328_colorMerge_transforms.mat")
+    center_raw = transforms['CenterSplitPosition'] 
+    center_arr = np.atleast_1d(center_raw).astype(int).ravel()
+    centerPos = (int(center_arr[0]), int(center_arr[1]))  
+
     laser_correction_colors(
         str(bg_sub),
         str(color_lcorr),
-        ff_colors_norm,
-        laser_correction_Colors_pattern
+        laser_correction_Colors_pattern,
+        centerPos
     )
 
-    # 3) COLOR SPLIT (after correction) → (C=4, X, Zc, Yc)
+    """# 3) COLOR SPLIT (after correction) → (C=4, X, Zc, Yc)
     #    Use MATLAB-provided center if present.
     transforms = sio.loadmat(
         '/bil/proj/rf1hillman/2025_06_26_NPBB328_surface_processingMatlabCode_SLURM/NPBB328_colorMerge_transforms.mat',
@@ -785,7 +918,7 @@ def preprocess_colors(spool_file, colors_location_xzy, nuclei_preprocessed_locat
     # 5) UNMIX (reads from *_registered/omehans and writes to *_unmixed)
     unmixed = base.with_name(base.name + "_unmixed")
     unmixed.mkdir(parents=True, exist_ok=True)
-    unmix_channels(str(registered), str(unmixed), M_inv, batch_size=10_000_000)
+    unmix_channels(str(registered), str(unmixed), M_inv, batch_size=10_000_000) """
 
-    return str(unmixed)
+    return str(color_lcorr)
 

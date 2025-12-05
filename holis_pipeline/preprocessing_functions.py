@@ -5,12 +5,14 @@
 # (Preprocessing functions are further down)
 
 ### MODULES ###
-
+import logging
+from datetime import datetime
 import numpy as np
 from ast import literal_eval
 import json
 from pprint import pprint as print
 import os
+import re
 from numcodecs import Blosc
 # from numcodecs import blosc
 # blosc.set_nthreads(16)
@@ -459,7 +461,48 @@ def get_start_stop_reads_for_frame_groups(file_name, header_info=None, frames_at
 
 #######################################################################################
 
+################################################################
+# Functions to help with extracting names and numbers from paths
+################################################################
 
+def infer_z(path):
+    m = re.search(r"-z(\d+)-", os.path.basename(path))
+    if m: return m.group(1)
+    # fallback: parent folder like ".../z03/"
+    m2 = re.search(r"corrections(\d+)", os.path.basename(os.path.dirname(path)))
+    if m2: return m2.group(1)
+    raise ValueError(f"Cannot infer z from {path}")
 
+EXC_RE = re.compile(r"[Ee]xc[-_]?(\d{3,4})\s*nm")
 
+def infer_laser_nm(path: str) -> str:
+    name = os.path.basename(path)
+    m = EXC_RE.search(name)
+    if m:
+        return m.group(1)  # "488", "561", "660", etc.
 
+    m2 = re.search(r"(\d{3,4})\s*nm", name, flags=re.IGNORECASE)
+    if m2:
+        return m2.group(1)
+    return None
+
+def infer_dark_frames(path: str) -> bool:
+    return "dark" in path.lower()
+
+################################################################
+# Functions to set up logging
+################################################################
+
+def setup_logging(out_dir: str) -> logging.Logger:
+    os.makedirs(out_dir, exist_ok=True)
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    pid = os.getpid()
+    log_path = os.path.join(out_dir, f"holis_{ts}_{pid}.log")
+
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s %(name)s %(levelname)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[logging.FileHandler(log_path)]
+    )
+    return logging.getLogger(__name__)

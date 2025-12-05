@@ -35,6 +35,30 @@ def write_omehans(path_to_omehans, numpy_data):
         for c in range(numpy_data.shape[0]):
             array[c, :, :, :] = numpy_data[c, :, :, :]
 
+def write_omehans_from_dask(path_to_omehans, data):
+    print("Saving .omehans array")
+    os.makedirs(path_to_omehans, exist_ok=True)
+
+    compressor = Blosc(cname='zstd', clevel=5, shuffle=1, blocksize=0)
+
+    if data.ndim == 3:
+        chunks = (128, 128, 128)
+    elif data.ndim == 4:
+        chunks = (1, 128, 128, 128)
+    else:
+        raise ValueError(f"Unsupported ndim={data.ndim}")
+
+    store = H5_Nested_Store(path_to_omehans, "a")
+    z = zarr.zeros(store=store, shape=data.shape, chunks=chunks,
+                   compressor=compressor, dtype=data.dtype)
+
+    if isinstance(data, da.Array):
+        if data.chunks != z.chunks:
+            data = data.rechunk(z.chunks)
+        da.store(data, z, lock=False)   # streams without full materialization
+    else:
+        z[...] = data    
+
 
 def write_zarr(path_to_zarr, numpy_data):
     print("Saving .zarr array")
