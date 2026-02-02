@@ -8,21 +8,26 @@ from holis_pipeline.settings import *
 
 def write_detection_task_for_slurm(chunk_number, vol_unmixed, task_path, output_path):
     work_dir = str(Path(os.path.dirname(__file__)).parent)
+    #Path(task_path).parent.mkdir(parents=True, exist_ok=True)
     with open(task_path, 'w') as f:
         f.write('#!/bin/bash\n')
         f.write('module load miniconda3\n')
         f.write(f'source activate {GPU_ENV_NAME}')
         f.write('\n')
-        f.write(f'python {work_dir}/predict_dynamicThreshold_fast_simple.py')  # TODO
-        f.write(' ')
-        f.write(MODEL_PATH)
-        f.write(' ')
-        f.write(str(chunk_number))
-        f.write(' ')
-        f.write(str(vol_unmixed))
-        f.write(' ')
-        f.write(str(output_path))
-        f.write('\n')
+        #f.write(f'python {work_dir}/predict_dynamicThreshold_fast_simple.py')  # TODO
+        #f.write(' ')
+        #f.write(MODEL_PATH)
+        #f.write(' ')
+        #f.write(str(chunk_number))
+        #f.write(' ')
+        #f.write(str(vol_unmixed))
+        #f.write(' ')
+        #f.write(str(output_path))
+        #f.write('\n')
+        f.write(
+            f'python "{work_dir}/predict_dynamicThreshold_fast_simple.py" '
+            f'"{MODEL_PATH}" {chunk_number} "{vol_unmixed}" "{output_path}"\n'
+        )
 
 
 def submit_slurm_task_gpu(path_to_task):

@@ -145,7 +145,14 @@ location = os.path.join(vol_unmixed, 'omehans')
 #lazy_tiff_stack = dask_zarray[0, 0, :, :, :]
 #lazy_tiff_stack = dask_zarray
 dask_zarray = read_omehans(location)
-lazy_tiff_stack = dask_zarray[0, :, :, :]
+
+if dask_zarray.ndim == 4:
+    lazy_tiff_stack = dask_zarray[0, :, :, :]
+elif dask_zarray.ndim == 3:
+    lazy_tiff_stack = dask_zarray[:, :, :]
+else:
+    raise ValueError(f"Unexpected dask_zarray ndim={dask_zarray.ndim}")
+
 print(f'lazy_tiff_stack {lazy_tiff_stack.shape}')
 ratios = (np.array(lazy_tiff_stack.shape) / np.array(CHUNK_SIZE)).astype('int') + 1
 patchify_chunks_shape = (*list(ratios), *CHUNK_SIZE)
@@ -166,7 +173,8 @@ if int(chunk_number) >= len(chunk_indices) or int(chunk_number) < 0:
 #-----------------------------------------------------
 
 #lazy_data = dask_zarray[0, 0, :, :, :]
-lazy_data = dask_zarray[0, :, :, :]
+#lazy_data = dask_zarray[0, :, :, :]
+lazy_data = lazy_tiff_stack
 ind = chunk_indices[int(chunk_number)]
 yx_ratio = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
 yz_ratio = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]

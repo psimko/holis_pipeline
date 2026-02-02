@@ -23,14 +23,23 @@ def chunk_data(nuclei_dir, output_dir):
     #dask_zarray = da.array(zarray)
     print(dask_zarray)
     #lazy_tiff_stack = dask_zarray[0, nuclei_channel, :, :, :]
-    lazy_tiff_stack = dask_zarray[0, :, :, :]
+    #lazy_tiff_stack = dask_zarray[0, :, :, :]
+    #lazy_tiff_stack = dask_zarray[:, :, :]
+    lazy_tiff_stack = dask_zarray[0] if dask_zarray.ndim > 3 else dask_zarray
+    if lazy_tiff_stack.ndim == 3: 
+        ndim=3
+        lazy_tiff_stack = lazy_tiff_stack.transpose(1, 2, 0)   # xzy -> zyx
+    else:
+        ndim=4
+        lazy_tiff_stack = lazy_tiff_stack.transpose(0, 2, 3, 1) 
+
     log.info(f"3D stack shape {lazy_tiff_stack.shape}")
     print("3D stack shape", lazy_tiff_stack.shape)
 
     # Get coordinates and indices of each chunk
     ratios = (np.array(lazy_tiff_stack.shape) / np.array(settings.CHUNK_SIZE)).astype('int') + 1
     patchify_chunks_shape = (*list(ratios), *settings.CHUNK_SIZE)
-    origin_coords = get_origin_coords(3, patchify_chunks_shape, settings.CHUNK_SIZE)
+    origin_coords = get_origin_coords(ndim, patchify_chunks_shape, settings.CHUNK_SIZE)
     chunk_indices = get_chunk_indices(origin_coords, settings.CHUNK_SIZE)
     np.save(os.path.join(output_dir, "origin_coords.npy"), origin_coords)
     np.save(os.path.join(output_dir, "chunk_indices.npy"), chunk_indices)

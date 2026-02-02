@@ -26,6 +26,7 @@ def read_omehans(path_to_omehans, scale=None):
 
 def get_mask(input_path, output_path):
     bg = read_omehans(input_path)
+    bg = bg[:1000,:,:]
     print(f'Bg omehans volume shape is {bg.shape}')
     bg = bg.compute()
     bg = bg.astype(np.float32)
@@ -37,6 +38,7 @@ def get_mask(input_path, output_path):
 
 def get_laser_pattern(input_path, output_path):
     pattern = read_omehans(input_path)
+    pattern = pattern[:1000,:,:]
     print(f'Laser pattern omehans volume shape is {pattern.shape}')
     pattern = pattern.compute()
     pattern = pattern.astype(np.float32)

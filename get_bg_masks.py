@@ -29,7 +29,7 @@ from holis_pipeline.utils.create_folders import create_folders
 from holis_pipeline.unchunk_data import combine_masks, remove_chunking_artifacts, combine_centroids_csv, extract_coords, combine_spectral_info_csv
 from holis_pipeline.extract_spectral_info import get_spectral_info_slurm
 from get_correction_masks_hicam_hemibrain1 import get_mask
-from holis_pipeline.processing_functions import setup_logging, infer_z, infer_laser_nm, EXC_RE
+from holis_pipeline.preprocessing_functions import setup_logging, infer_z, infer_laser_nm, EXC_RE
 
 
 os.umask(0o007)

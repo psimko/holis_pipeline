@@ -61,7 +61,7 @@ from holis_pipeline.detect_nuclei import detect_cells_slurm
 from holis_pipeline.utils.create_masks import get_chunks_with_bright_signal, get_chunks_with_background
 from holis_pipeline.preprocess_v2_sep2025 import preprocess_nuclei, preprocess_colors # , unmix_data, nuclei_color_registration
 #from holis_pipeline.utils.create_folders import create_folders
-from holis_pipeline.unchunk_data import combine_masks, remove_chunking_artifacts, combine_centroids_csv, extract_coords, combine_spectral_info_csv
+from holis_pipeline.unchunk_data import combine_masks, remove_chunking_artifacts, combine_centroids_csv, extract_coords, combine_spectral_info_csv, combine_centroids_noMasks_csv
 from holis_pipeline.extract_spectral_info import get_spectral_info_slurm
 from holis_pipeline.preprocessing_functions import setup_logging, infer_z, infer_laser_nm, EXC_RE
 
@@ -70,35 +70,37 @@ from holis_pipeline.preprocessing_functions import setup_logging, infer_z, infer
 
 os.umask(0o007)
 
-NUCLEI_FLI = sys.argv[1] #nuclei_fli                  #/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/NPBB328-Cortex-Slab06-run002-z01-y001-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli.zst
+NUCLEI_OME = sys.argv[1] #nuclei_fli                  #/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/NPBB328-Cortex-Slab06-run002-z01-y001-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli.zst
 OUTPUT_DIR = sys.argv[2] #output_dir                  #/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_processed/NPBB328-Cortex-Slab06-run002-z01-y001-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli
-
+print('NUCLEI_OME is {NUCLEI_OME} in segment_scan.py')
 
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
 
 #output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')  # TODO: do we need scale? Will it always be full resolution?
+OUTPUT_DIR_thisSCAN = os.path.join(OUTPUT_DIR, os.path.basename(NUCLEI_OME), f'scale_{SCALE}')
+if not os.path.exists(OUTPUT_DIR_thisSCAN):
+    os.makedirs(OUTPUT_DIR_thisSCAN)
 
-COLORS_FLI = NUCLEI_FLI.replace('272.fli', '088.fli')
+#COLORS_FLI = NUCLEI_FLI.replace('272.fli.zst', '088.fli.zst')
 
 
 def main():
     # Log the start time
     tstart = datetime.now()
     log.info(f"START TIME: {tstart}")
-    #create_folders(OUTPUT_DIR)
+    log.info(f'NUCLEI_OME is {NUCLEI_OME} in segment_scan.py')
 
-    # Read data to zarr - this might have already been done
-    #log.info("Reading data")
-    #NUCLEI_DIR = read_fli_as_zarr(NUCLEI_FLI, os.path.join(OUTPUT_DIR, os.path.basename(NUCLEI_FLI)))
-    #log.info("Read nuclei channel")
-    #COLORS_DIR = read_fli_as_zarr(COLORS_FLI, os.path.join(OUTPUT_DIR, os.path.basename(COLORS_FLI)))
-    #log.info("Read color channels")
+    #CENTROIDS_OUT = os.path.join(OUTPUT_DIR, os.path.basename(NUCLEI_FLI)) # path to the scan output directory named using its name
+    #COLORS_OUT = os.path.join(OUTPUT_DIR, os.path.basename(COLORS_FLI))
+    DETECTION_DIR = os.path.join(OUTPUT_DIR_thisSCAN , 'detection')
+    JOBS_DIR = os.path.join(OUTPUT_DIR_thisSCAN , 'slurm_jobs')
+    if not os.path.exists(JOBS_DIR):
+        os.makedirs(JOBS_DIR)
+    #SPECTRAL_INFO_DIR = os.path.join(OUTPUT_DIR, os.path.basename(NUCLEI_OME), f'scale_{SCALE}', 'spectral_info')
 
-    NUCLEI_OUT = os.path.join(OUTPUT_DIR, os.path.basename(NUCLEI_FLI)) # path to the scan output directory named using its name
-    COLORS_OUT = os.path.join(OUTPUT_DIR, os.path.basename(COLORS_FLI))
 
-    #################################################################################################
+    """     #################################################################################################
     # Run preprocessing
     ################################################################################################# 
 
@@ -114,31 +116,25 @@ def main():
         COLORS_PROCESSED = COLORS_OUT
     else:
         COLORS_PROCESSED = preprocess_colors(COLORS_FLI, COLORS_OUT, NUCLEI_PROCESSED)
-        log.info(f"Preprocessing colors (BG → laser-correct → split → register → unmix) to {COLORS_PROCESSED}")
+        log.info(f"Preprocessing colors (BG → laser-correct → split → register → unmix) to {COLORS_PROCESSED}") """
 
 
-    log.info("Preprocessing stages complete.")
-    log.info(f"NUCLEI_PROCESSED:  {NUCLEI_PROCESSED}")
-    log.info(f"COLORS_PROCESSED: {COLORS_PROCESSED }")
-    log.info(f"TOTAL TIME: {datetime.now() - tstart}")
-
-
-    """ chunk_indices = chunk_data(COLORS_UNMIXED, output_folder_scale)
+    chunk_indices = chunk_data(NUCLEI_OME, OUTPUT_DIR_thisSCAN)
     print(f'Chunk indices: {chunk_indices}')
 
     if FOREGROUND_MASKS_ENABLED:
         # extract low-resolution masks for foreground
-        if not os.path.exists(os.path.join(output_folder_scale, "zero_chunks.npy")):
+        if not os.path.exists(os.path.join(OUTPUT_DIR_thisSCAN , "zero_chunks.npy")):
             get_chunks_with_background()
-        bg_chunks = set(np.load(os.path.join(output_folder_scale, "zero_chunks.npy")))
+        bg_chunks = set(np.load(os.path.join(OUTPUT_DIR_thisSCAN , "zero_chunks.npy")))
     else:
         bg_chunks = set()
 
     if DENSE_REGION_MASK_ENABLED:
         # extract low-resolution masks for bright spots
-        if not os.path.exists(os.path.join(output_folder_scale, "bright_chunks.npy")):
+        if not os.path.exists(os.path.join(OUTPUT_DIR_thisSCAN , "bright_chunks.npy")):
             get_chunks_with_bright_signal()
-        bright_chunks = set(np.load(os.path.join(output_folder_scale, "bright_chunks.npy")))
+        bright_chunks = set(np.load(os.path.join(OUTPUT_DIR_thisSCAN, "bright_chunks.npy")))
     else:
         bright_chunks = set()
 
@@ -148,7 +144,8 @@ def main():
     # for extracted chunks generate and submit nuclei detection jobs
     fg_chunks = set([x for x in range(len(chunk_indices)) if x not in bg_chunks and x not in bright_chunks])
     log.info(f"Total foreground chunks: {len(fg_chunks)}")
-    detect_cells_slurm(list(fg_chunks), COLORS_UNMIXED, JOBS_DIR, DETECTION_DIR)
+    #nuclei_omehans = os.path.join(NUCLEI_OME, 'omehans')
+    detect_cells_slurm(list(fg_chunks), NUCLEI_OME, JOBS_DIR, DETECTION_DIR)
     log.info("All nuclei detection tasks were submitted")
 
     # check which csv files have been generated
@@ -183,28 +180,48 @@ def main():
     except FileExistsError:
         pass
 
-    combined_mask_location = combine_masks(detection_masks_folder, COLORS_UNMIXED, output_folder_scale, output_folder_scale)   #DETECTION_DIR is where the chunk indices are stored
-    # no_artifact_mask_location = remove_chunking_artifacts(combined_mask_location)
+    combined_mask_location = combine_masks(detection_masks_folder, NUCLEI_OME, OUTPUT_DIR_thisSCAN, DETECTION_DIR)   #DETECTION_DIR is where the chunk indices are stored
+    #no_artifact_mask_location = remove_chunking_artifacts(combined_mask_location)
     #coords_file = extract_coords(combined_mask_location, output_folder_scale, coord_order="zyx", connectivity=1, min_size=4, float_dtype=np.float32)
 
-
-
-    combined_centroids_location = combine_centroids_csv(
+    """     combined_centroids_location = combine_centroids_csv(
         centroids_folder,
-        detection_masks_folder,
-        COLORS_UNMIXED,
-        output_folder_scale,
+        #detection_masks_folder,
+        NUCLEI_OME,
+        OUTPUT_DIR_thisSCAN,   #output
+        #os.path.join(OUTPUT_DIR, os.path.basename(NUCLEI_OME)),  #old ouput
         chunk_indices_name="chunk_indices.npy",
         csv_pattern="*.csv",
-        mask_pattern="*.tif",
+        #mask_pattern="*.tif",
         centroid_prefix="centroids",   # anchor for parsing chunk id from CSV names
-        mask_prefix="centroids",            # anchor for parsing chunk id from mask names
-        coord_order="zyx",             # your CSVs appear to be (z,y,x)
+        #mask_prefix="centroids",            # anchor for parsing chunk id from mask names
+        coord_order="zyx",            
+        dedupe=True,
+        output_file_name="combined_centroids_wMaks.csv"
+    ) """
+
+    combined_centroids_location = combine_centroids_noMasks_csv(
+        centroids_folder,
+        #detection_masks_folder,
+        NUCLEI_OME,
+        OUTPUT_DIR_thisSCAN,   
+        #os.path.join(OUTPUT_DIR, os.path.basename(NUCLEI_OME)),  #old ouput
+        chunk_indices_name="chunk_indices.npy",
+        csv_pattern="*.csv",
+        #mask_pattern="*.tif",
+        centroid_prefix="centroids",   # anchor for parsing chunk id from CSV names
+        #mask_prefix="centroids",            # anchor for parsing chunk id from mask names
+        coord_order="zyx",            
         dedupe=True,
         output_file_name="combined_centroids.csv"
     )
 
-    get_spectral_info_slurm(list(fg_chunks), output_folder_scale, centroids_folder, detection_masks_folder, COLORS_UNMIXED, JOBS_DIR, SPECTRAL_INFO_DIR)
+    log.info("Saved combined centroids.")
+    #log.info(f"NUCLEI_PROCESSED:  {NUCLEI_PROCESSED}")
+    #log.info(f"COLORS_PROCESSED: {COLORS_PROCESSED }")
+    log.info(f"TOTAL TIME: {datetime.now() - tstart}")
+
+    """     get_spectral_info_slurm(list(fg_chunks), output_folder_scale, centroids_folder, detection_masks_folder, COLORS_UNMIXED, JOBS_DIR, SPECTRAL_INFO_DIR)
     #spectral_info_location = get_spectral_info_slurm(list(fg_chunks), output_folder_scale, centroids_folder, detection_masks_folder, COLORS_UNMIXED, JOBS_DIR, SPECTRAL_INFO_DIR)  # single task? No chunks? 
     #spectral_info_location = # single task
 
@@ -247,10 +264,9 @@ def main():
 
 
     print("Spectral information saved at", combined_spectral_info_location)
-    log.info("All Done!")
+    log.info("All Done!") """
 
 
-"""
 
 if __name__ == "__main__":
     log = setup_logging(OUTPUT_DIR)

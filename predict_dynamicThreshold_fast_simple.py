@@ -139,13 +139,31 @@ centroids_filename = os.path.join(centroids_folder, f"napari_chunk_{str(chunk_nu
 
 #location = os.path.join(NUCLEI_DIR, f'scale{SCALE}')
 location = os.path.join(vol_unmixed, 'omehans')
+print("NUCLEI_OME path:", location)
 #store = H5_Nested_Store(location)
 #zarray = zarr.open(store)
 #dask_zarray = da.array(zarray).compute()
 #lazy_tiff_stack = dask_zarray[0, 0, :, :, :]
 #lazy_tiff_stack = dask_zarray
 dask_zarray = read_omehans(location)
-lazy_tiff_stack = dask_zarray[0, :, :, :]
+
+print(f'dask_zarray has shape {dask_zarray.shape}')
+lazy_tiff_stack = dask_zarray[0] if dask_zarray.ndim > 3 else dask_zarray
+
+if lazy_tiff_stack.ndim == 3: 
+    ndim=3
+    lazy_tiff_stack = lazy_tiff_stack.transpose(1, 2, 0)   # xzy -> zyx
+else:
+    ndim=4
+    lazy_tiff_stack = lazy_tiff_stack.transpose(0, 2, 3, 1) 
+#if dask_zarray.ndim == 4:
+#    lazy_tiff_stack = dask_zarray[0, :, :, :]
+#elif dask_zarray.ndim == 3:
+#    lazy_tiff_stack = dask_zarray[:, :, :]
+#else:
+#    lazy_tiff_stack = dask_zarray[0, 0, :, :, :]
+    #raise ValueError(f"Unexpected dask_zarray ndim={dask_zarray.ndim}")
+
 print(f'lazy_tiff_stack {lazy_tiff_stack.shape}')
 ratios = (np.array(lazy_tiff_stack.shape) / np.array(CHUNK_SIZE)).astype('int') + 1
 patchify_chunks_shape = (*list(ratios), *CHUNK_SIZE)
@@ -169,10 +187,13 @@ if int(chunk_number) >= len(chunk_indices) or int(chunk_number) < 0:
 
 
 #lazy_data = dask_zarray[0, 0, :, :, :]
-lazy_data = dask_zarray[0, :, :, :]
+#lazy_data = dask_zarray[0, :, :, :]
+lazy_data = lazy_tiff_stack
 ind = chunk_indices[int(chunk_number)]
 yx_ratio = float(NUCLEI_RESOLUTION[-1]) / NUCLEI_RESOLUTION[-2]
 yz_ratio = float(NUCLEI_RESOLUTION[-3]) / NUCLEI_RESOLUTION[-2]
+yx_ratio = 1
+yz_ratio = 1
 #bright_chunks = set(np.load(os.path.join(OUTPUT_DIR, f'scale_{SCALE}', "bright_chunks.npy")))
 bright_chunks_path = os.path.join(detection_folder, 'bright_chunks.npy')
 if os.path.exists(bright_chunks_path):
@@ -320,6 +341,12 @@ labels = measure.label(segmented_stack)
 
 #Convert to uint8 so we can open image in most image viewing software packages
 reconstructed_image = segmented_stack.astype(np.uint8)
+
+if reconstructed_image.ndim == 3: 
+    reconstructed_image= reconstructed_image.transpose(2, 0, 1)   # zyx -> xzy
+else:
+    reconstructed_image = reconstructed_image.transpose(0, 3, 1, 2) 
+
 print(reconstructed_image.dtype)
 
 tifffile.imwrite(out_filename, reconstructed_image)
@@ -337,7 +364,13 @@ table = pd.DataFrame(
         )
     )
 
+
 new_headers = {'centroid-0': 'axis-0', 'centroid-1': 'axis-1', 'centroid-2': 'axis-2'}
+
+######################
+# reorder to XZY
+table = table[['centroid-2', 'centroid-0', 'centroid-1']]
+#####################
 
 # Save centroids to a CSV file
 table.to_csv(centroids_filename, index=False, header=[new_headers[col] for col in table.columns])

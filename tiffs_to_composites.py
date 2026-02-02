@@ -127,7 +127,7 @@ if __name__ == "__main__":
     parser.add_argument("source_root")
     parser.add_argument("output_tif")
     parser.add_argument("--y_dir_glob", default=f"*y*-272.fli*_bg_subtracted*")
-    parser.add_argument("--slice_template", default="stripe_{z:04d}.tif")
+    parser.add_argument("--slice_template", default="stripe_{z:04d}*.tif")
     parser.add_argument("--crop_top", type=int, default=0)
     parser.add_argument("--crop_bottom", type=int, default=0)
     parser.add_argument("--no_norm", action="store_true", help="disable 0-1 -> uint16 normalization")
@@ -143,4 +143,4 @@ if __name__ == "__main__":
         crop_bottom=args.crop_bottom,
         normalize_to_uint16=not args.no_norm,
     )
-#python tiffs_to_composites.py 800 --y_dir_glob="*y*-272.fli*_bg_subtracted*" '/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_tiffs_peter/' '/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_composites_peter/composite_tiff_z800.tiff' --crop_top 387 --crop_bottom 5
+#python tiffs_to_composites.py 800 --y_dir_glob="*y*-272.fli*_bg_subtracted*" '/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_tiffs_peter/' '/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_composites_peter/composite__nuc_tiff_z800_bg_subtracted.tiff' --crop_top 387 --crop_bottom 5

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from get_correction_masks_hicam_hemibrain1 import normalize_patterns, mix_patterns
 
 
+
 # ---------- Config (edit all inputs here) ----------
 @dataclass(frozen=True) # this disallows mutability
 class Config:
@@ -26,7 +27,9 @@ class Config:
     convert_to_ome: bool = False
     get_bg_masks: bool = False
     get_patterns: bool = False
+    norm_and_mix_patterns: bool = False
     process: bool = True
+    segment: bool = False
 
     # Transforms and other .mat info path
     transforms_matlab_path = "/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Matlab_info/NPBB328_colorMerge_transforms.mat"   
@@ -34,34 +37,41 @@ class Config:
 
     # Don't forget to change the dates too (in the write_slurm script as well) (not just the slab number)
     # IO — convert fli to omehans
-    input_dir_fli: str = "/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab6/2025_08_22_HOLiS_NPBB328_Cortex_Slab06/"
-    output_dir_ome: str = "/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/"  # should be the same as input for processing
-    file_pattern_fli: str = '*NPBB328-Cortex-Slab06-run*-z01-y*-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli.zst'
+    input_dir_fli: str = "/bil/proj/rf1hillman/2025_09_04_HOLiS_NPBB328_Cortex_Slab7_test_tissueXYZ/"                            #"/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab6/2025_08_22_HOLiS_NPBB328_Cortex_Slab06/"
+    output_dir_ome: str = "/bil/proj/rf1hillman/results_peter/results_Slab7_test/"                                               #"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/"   should be the same as input for processing
+    file_pattern_fli: str = 'NPBB328-Cortex-Slab07-ROI1-run*-z*-y*-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli'       #'*NPBB328-Cortex-Slab06-run*-z01-y*-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli.zst'
     
     # IO — background masks
-    input_dir_bg: str = "/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab6/2025_08_22_HOLiS_NPBB328_Cortex_Slab06/"  # where .fli files are, should be in the same folder as the raw files
-    output_dir_bg: str = "/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/correction_files/"
-    file_pattern_bg: str = "NPBB328-Cortex-Slab06-run*-z*-y000-darkFrames_HiCAM FLUO_1875-ST-272.fli.zst"
+    input_dir_bg: str = "/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab7/2025_09_02_HOLiS_NPBB328_Cortex_Slab07/"              #"/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab6/2025_08_22_HOLiS_NPBB328_Cortex_Slab06/"  # where .fli files are, should be in the same folder as the raw files
+    output_dir_bg: str = "/bil/proj/rf1hillman/results_peter/results_Slab7_test/correction_files/"                                 #"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/correction_files/"
+    file_pattern_bg: str = "NPBB328-Cortex-Slab07-run*-z*-y000-darkFrames_HiCAM FLUO_1875-ST-272.fli.zst"                      #"NPBB328-Cortex-Slab06-run*-z*-y000-darkFrames_HiCAM FLUO_1875-ST-272.fli.zst"
 
     # IO — laser patterns
-    input_dir_lasers: str = "/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab6/" # directory in which subdirectories for different zs are located
-    output_dir_lasers: str = "/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/correction_files/laser_patterns/"
-    file_pattern_lasers: str = "epoxy-mix-run*HiCAM FLUO_1875-ST-272.fli.zst" 
+    input_dir_lasers: str = "/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab7/"                                                  #"/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab6/" # directory in which subdirectories for different zs are located
+    output_dir_lasers: str = "/bil/proj/rf1hillman/results_peter/results_Slab7_test/correction_files/laser_patterns/"             #"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/correction_files/laser_patterns/"
+    subfolder_pattern_lasers: str = "2025_09_02_HOLiS_NPBB328_Cortex_Slab07_corrections*"
+    file_pattern_lasers: str = "epoxy-mix-run*HiCAM FLUO_1875-ST-272.fli.zst"                                                   #"epoxy-mix-run*HiCAM FLUO_1875-ST-272.fli.zst" 
 
     # IO — processing
-    input_dir: str = "/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/"
-    output_dir: str = "/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_processed_bg_dec1/"
-    file_pattern = "*-272.fli.zst"
+    input_dir_process: str = "/bil/proj/rf1hillman/results_peter/results_Slab7_test/"                                           #"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/"
+    output_dir_process: str = "/bil/proj/rf1hillman/results_peter/results_Slab7_test/out_processed/"                            #"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_processed_bg_dec1/"
+    file_pattern_process = "*-272.fli"
+
+    # IO — segmentation
+    input_dir_segment: str = "/bil/proj/rf1hillman/results_peter/results_Slab7_test/out_processed/"                             #*"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_processed_bg_dec1/"
+    output_dir_segment: str = "/bil/proj/rf1hillman/results_peter/results_Slab7_test/segmentation/"                             #"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_processed_bg_dec1/segmentation/"
+    file_pattern_segment = "*-272.fli_laser_corrected"
 
     # SLURM
     partition: str = "compute"
     mem_gb: int = 1024
     cpus: int = 16
     python_path: str = "/bil/users/psimko/.conda/envs/stack_to_multiscale_ngff/bin/python"
-    conversion_script: str = "/bil/users/psimko/holis/holis_pipeline/convert_scan.py"  
+    convert_script_path: str = "/bil/users/psimko/holis/holis_pipeline/convert_scan.py"  
     get_bg_masks_script_path: str = "/bil/users/psimko/holis/holis_pipeline/get_bg_masks.py"
     get_laser_pattern_script_path: str = "/bil/users/psimko/holis/holis_pipeline/get_laser_patterns.py"
     process_script_path: str = "/bil/users/psimko/holis/holis_pipeline/process_scan.py"
+    segment_script_path: str = "/bil/users/psimko/holis/holis_pipeline/segment_scan.py"
 
 CFG = Config()
 # ----------------------------------------
@@ -79,18 +89,27 @@ set -euo pipefail
 """
 # ----------------------------------------
 
-def write_slurm_script(cfg: Config, input_dir: str, output_dir: str, file_pattern: str, script_path: str, job_prefix: str):
+def write_slurm_script(cfg: Config, input_dir: str, output_dir: str, file_pattern: str, script_path: str, job_prefix: str, subfolder_pattern_lasers: str = None):
     os.makedirs(output_dir, exist_ok=True)
     if job_prefix == 'laser':
-        file_glob = glob(os.path.join(input_dir, "2025_08_22_HOLiS_NPBB328_Cortex_Slab06_corrections*", file_pattern)) 
-    elif job_prefix == 'proc':
-        file_glob = glob(os.path.join(input_dir, file_pattern))
+        file_glob = glob(os.path.join(input_dir, subfolder_pattern_lasers, file_pattern)) 
+    elif job_prefix == 'proc' or job_prefix == 'segment':
+        file_glob = glob(os.path.join(input_dir, file_pattern))  
+        print(file_glob)
     else:
         file_glob = glob(os.path.join(input_dir, "**", file_pattern), recursive=True) 
     print(">>>>>>>>>>> Files:", len(file_glob))
     for filename in file_glob:
         base = os.path.basename(filename)                                   # e.g. NPBB328-...-272.fli.zst
-        root = os.path.splitext(os.path.splitext(base)[0])[0]               # strip .zst then .fli
+        #root = os.path.splitext(os.path.splitext(base)[0])[0]               # strip .zst then .fli 
+        if base.endswith(".fli.zst"):               # take care of both .fli and .zst.fli extensions
+            root = base[:-len(".fli.zst")]
+        elif base.endswith(".fli"):
+            root = base[:-len(".fli")]
+        else:
+            root = os.path.splitext(base)[0]
+        print(root)
+
         root = re.sub(r'\s+', '_', root)          # replace spaces
         root = re.sub(r'[^A-Za-z0-9._-]+', '_', root)  # extra safety
         job_name = f"{job_prefix}_{root}"
@@ -127,7 +146,7 @@ def write_slurm_script(cfg: Config, input_dir: str, output_dir: str, file_patter
 def main(cfg: Config):
     # Write SLURM script to convert flis to omehans
     if cfg.convert_to_ome:
-        write_slurm_script(cfg, cfg.input_dir_fli, cfg.output_dir_ome, cfg.file_pattern_fli, cfg.conversion_script, "convert")
+        write_slurm_script(cfg, cfg.input_dir_fli, cfg.output_dir_ome, cfg.file_pattern_fli, cfg.convert_script_path, "convert")
     else:
         print("convert_to_ome=False — skipping conversion to ome")
     
@@ -139,18 +158,31 @@ def main(cfg: Config):
     
     # Write SLURM script to extract LASER PATTERN masks
     if cfg.get_patterns:
-        write_slurm_script(cfg, cfg.input_dir_lasers, cfg.output_dir_lasers, cfg.file_pattern_lasers, cfg.get_laser_pattern_script_path, "laser")
+        write_slurm_script(cfg, cfg.input_dir_lasers, cfg.output_dir_lasers, cfg.file_pattern_lasers, cfg.get_laser_pattern_script_path,"laser", cfg.subfolder_pattern_lasers)
+        # No parallelization necessary here, just working with 2D masks. Returns 2 dictionaries {laser: pattern [Z,Y]}
+        #normalize_patterns(cfg, cfg.output_dir_lasers, cfg.output_dir_lasers)         # Input and output are the same here
+        #mix_patterns(cfg, cfg.output_dir_lasers, cfg.output_dir_lasers)
+    else:
+        print("get_patterns=False — skipping laser pattern extraction")
+
+    if cfg.norm_and_mix_patterns:
         # No parallelization necessary here, just working with 2D masks. Returns 2 dictionaries {laser: pattern [Z,Y]}
         normalize_patterns(cfg, cfg.output_dir_lasers, cfg.output_dir_lasers)         # Input and output are the same here
         mix_patterns(cfg, cfg.output_dir_lasers, cfg.output_dir_lasers)
     else:
-        print("get_patterns=False — skipping laser pattern extraction")
+        print("norm_and_mix_patterns=False — skipping laser pattern normalization and mixing")
 
     # Write SLURM script to PROCESS
     if cfg.process:
-        write_slurm_script(cfg, cfg.input_dir, cfg.output_dir, cfg.file_pattern, cfg.process_script_path, "proc")
+        write_slurm_script(cfg, cfg.input_dir_process, cfg.output_dir_process, cfg.file_pattern_process, cfg.process_script_path, "proc")
     else:
         print("process=False — skipping processing")
+
+    # Write SLURM script to SEGMENT
+    if cfg.segment:
+        write_slurm_script(cfg, cfg.input_dir_segment, cfg.output_dir_segment, cfg.file_pattern_segment, cfg.segment_script_path, "segment")
+    else:
+        print("segment=False — skipping segmentation")
 
 # ----------------------------------------
 if __name__ == "__main__":

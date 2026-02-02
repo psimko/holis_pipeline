@@ -21,6 +21,7 @@ from holis_pipeline import settings
 from holis_pipeline.preprocessing_functions import read_data_file, infer_z, infer_laser_nm, EXC_RE
 from holis_pipeline.read_data import read_fli_as_zarr
 from holis_pipeline.utils.zarr_related import read_omehans, write_omehans, write_zarr, write_omehans_from_dask
+from scipy.ndimage import affine_transform
 
 
 ##############################################################################
@@ -37,6 +38,65 @@ from holis_pipeline.utils.zarr_related import read_omehans, write_omehans, write
 #ff_colors_norm = np.load(correction_path + "FF_colors_norm.npy")
 #laser_correction_Nuclei_pattern = np.load(correction_path + "Laser_correction_Nuclei_pattern.npy")
 #laser_correction_Colors_pattern = np.load(correction_path + "Laser_correction_Colors_pattern.npy")
+
+
+##############################################################################
+#### Helpers for affine transformations
+##############################################################################
+
+def _compute_output_shape_from_affine(A_in_to_out, in_shape_zyx):
+    """Approximate MATLAB imwarp's automatic output bounds in voxel coords."""
+    Z, Y, X = in_shape_zyx
+    corners = np.array([
+        [0,    0,    0,    1],
+        [Z-1,  0,    0,    1],
+        [0,    Y-1,  0,    1],
+        [0,    0,    X-1,  1],
+        [Z-1,  Y-1,  0,    1],
+        [Z-1,  0,    X-1,  1],
+        [0,    Y-1,  X-1,  1],
+        [Z-1,  Y-1,  X-1,  1],
+    ], dtype=float)
+
+    out_c = (A_in_to_out @ corners.T).T[:, :3]
+    lo = np.floor(out_c.min(axis=0)).astype(int)
+    hi = np.ceil(out_c.max(axis=0)).astype(int)
+
+    out_shape = tuple((hi - lo + 1).tolist())
+    out_origin = lo  # voxel-space "world limits" stand-in
+    return out_shape, out_origin
+
+def imwarp_like(volume_zyx, A_in_to_out, out_shape=None, out_origin=None, order=3):
+    """
+    volume_zyx: numpy array (Z,Y,X)
+    A_in_to_out: 4x4 homogeneous affine mapping input->output in voxel coords
+    out_shape/out_origin: fix the output grid to match channel 1
+    """
+    A = np.asarray(A_in_to_out, dtype=float)
+    Ainv = np.linalg.inv(A)
+
+    # SciPy uses: input_coords = M @ output_coords + b
+    M = Ainv[:3, :3]
+    b = Ainv[:3, 3]
+
+    if out_shape is None or out_origin is None:
+        out_shape, out_origin = _compute_output_shape_from_affine(A, volume_zyx.shape)
+
+    # shift output voxel coords by origin so all channels share same grid
+    # input = M @ (out + origin) + b  = M @ out + (M@origin + b)
+    offset = M @ np.asarray(out_origin, dtype=float) + b
+
+    warped = affine_transform(
+        volume_zyx.astype(np.float32),
+        matrix=M,
+        offset=offset,
+        output_shape=out_shape,
+        order=order,           # 3 == cubic
+        mode="constant",
+        cval=0.0,
+        prefilter=True,        # needed for cubic
+    )
+    return warped, out_shape, out_origin
 
 ##############################################################################
 #### Background and laser pattern correction functions
@@ -126,6 +186,9 @@ def laser_correction_nuclei(input_location, output_location, pattern_zy):
     #ff = ff_zy.astype(np.float32)
     pat = pattern_zy.astype(np.float32)
 
+    if pat.shape != (Z, Y):
+        raise ValueError(f"pattern_zy must be (Z,Y)=({Z},{Y}) got {pat.shape}")
+
     #ff_corr = _safe_div(img, ff)
     #corr = _safe_div(ff_corr, pat)
     corr = _safe_div(img, pat)
@@ -164,7 +227,7 @@ def laser_correction_colors(input_location, output_location, pattern_czy, center
     vol = read_omehans(os.path.join(input_location, "omehans")).compute().astype(np.float32)
     X, Z, Y = vol.shape
 
-    # 2) split into 4 quadrants in (Z,Y), same as your split_color_channels
+    # 2) split into 4 quadrants in (Z,Y), same as split_color_channels
     if center_pos is not None:
         cz, cy = int(center_pos[0]), int(center_pos[1])
     else:
@@ -204,6 +267,67 @@ def laser_correction_colors(input_location, output_location, pattern_czy, center
     #write_zarr(os.path.join(output_location, "zarr"), _clip16(corr))
 
     print("Saved laser-pattern-corrected colors (C=4, X, Zc, Yc)")
+
+def apply_transforms3D(nuclei_location: str, colors_location: str, transforms3D: dict, output_location: str): 
+
+    root = os.path.join(output_location, 'omehans')
+    if os.path.exists(os.path.join(root, '0', '0', '0')):
+        print("Applied transformations previously")
+        return
+
+    out_shape = None
+    out_origin = None
+    VolDataAll = None
+
+    vol_nuc = read_omehans(os.path.join(nuclei_location, "omehans")).compute().astype(np.float32)
+    vol_colors = read_omehans(os.path.join(colors_location, "omehans")).compute().astype(np.float32)
+
+    vol_nuc_zyx = np.transpose(vol_nuc, (1, 2, 0))                    # -> (Z,Y,X)
+    vol_colors_czyx = np.transpose(vol_colors, (0, 2, 3, 1))    
+
+    transforms = sio.loadmat("/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Matlab_info/NPBB328_colorMerge_transforms.mat")
+    FOVcrop_raw = transforms['FOVcrop']
+    Z_raw, Y_raw = FOVcrop_raw[0][0][0][0], FOVcrop_raw[0][0][1][0]
+    Z = tuple(int(v) for v in np.atleast_1d(Z_raw).ravel())
+    Y = tuple(int(v) for v in np.atleast_1d(Y_raw).ravel())
+    FOVcrop = {"Z": Z, "Y": Y}
+
+    z1, z2 = FOVcrop["Z"]
+    y1, y2 = FOVcrop["Y"]
+
+    for ch in range(0, 5):
+        A = transforms3D[ch]
+
+        if ch == 0:
+            im = vol_nuc_zyx.astype(np.float32)
+            tempVol, out_shape, out_origin = imwarp_like(im, A, order=3)
+        else:
+            im = vol_colors_czyx[ch-1].astype(np.float32)   # ch=1..4 -> idx=0..3
+            tempVol, _, _ = imwarp_like(im, A, out_shape=out_shape, out_origin=out_origin, order=3)
+
+        cropped = tempVol[z1:tempVol.shape[0]-z2, y1:tempVol.shape[1]-y2, :]
+        #cropped = tempVol[:, y1:tempVol.shape[1]-y2, z1:tempVol.shape[2]-z2]
+        #cropped = tempVol[:, z1:tempVol.shape[1]-z2, y1:tempVol.shape[2]-y2]
+        #cropped = tempVol
+
+        if VolDataAll is None:
+            VolDataAll = np.zeros((5,) + cropped.shape, dtype=np.float32)
+
+        VolDataAll[ch] = cropped
+
+        VolDataAll_xzy = np.transpose(VolDataAll, (0, 3, 1, 2)) 
+
+    try:
+        write_omehans(root, _clip16(VolDataAll_xzy))   # corr shape (5,X,Zc,Yc)
+    except zarr.errors.ContainsArrayError:
+        print(".omehans already exists (colors, corrected)")
+
+    # optional zarr, like in split_color_channels
+    #write_zarr(os.path.join(output_location, "zarr"), _clip16(corr))
+
+    print("Saved transformed images (C=5, X, Zc, Yc)")
+
+
 
 
 
@@ -437,7 +561,7 @@ def normalize_by_registered_max_dict(
     lasers_n = set(patterns_nuclei.keys())
     lasers_c = set(patterns_colors.keys())
     if lasers_n != lasers_c:
-        missing = lasers_n ^ lasers_c
+        missing = lasers_n ^ lasers_c   # this is symmetric difference of sets
         raise ValueError(f"Mismatched lasers between nuclei/colors: {missing}")
     if len(transforms) != 5:
         raise ValueError("Need 5 transforms: [nuc, ch1, ch2, ch3, ch4].")
@@ -809,19 +933,20 @@ def preprocess_nuclei(omehans_file, nuclei_location_xzy):
     Returns path to laser-corrected nuclei (XZY) folder.
     """
     base = Path(nuclei_location_xzy)
-    bg_sub = base.with_name(base.name + "_bg_subtracted")
+    bg_sub = base.with_name(base.name + "_bg_subtracted")   # concatenates _bg_subtracted to the name of the folder (last one in the path), leaves the resst of the path the same
     bg_sub.mkdir(parents=True, exist_ok=True)
 
     # BG subtraction (XZY vol, ZY mask)
     #Get z and define mask file names
-    base_ome = os.path.basename(omehans_file)  
-    root = os.path.splitext(os.path.splitext(base_ome)[0])[0] 
-    z_str = infer_z(root)
+    base_ome = os.path.basename(omehans_file)  # get file name only
+    root = os.path.splitext(os.path.splitext(base_ome)[0])[0]    # get file name without extensions
+    #z_str = infer_z(root)  # use this when running on a whole slab
+    z_str = '01' 
 
-    corr_BG_nuclei = np.load(os.path.join(os.path.split(omehans_file)[0] ,'correction_files',f"bg_nuclei_mask_z{z_str}.npy"))
+    corr_BG_nuclei = np.load(os.path.join(os.path.split(omehans_file)[0] ,'correction_files',f"bg_nuclei_mask_z{z_str}.npy"))    #  load bg correction mask
     subtract_background(str(omehans_file), str(bg_sub), corr_BG_nuclei)
 
-    # Laser correction (FF + pattern; both ZY)
+    # Laser correction (ZY pattern)
 
     # Create output folder
     laser_corr = base.with_name(base.name + "_laser_corrected")
@@ -857,7 +982,8 @@ def preprocess_colors(omehans_file, colors_location_xzy, nuclei_preprocessed_loc
     #Get z and define mask file names
     base_ome = os.path.basename(omehans_file)  
     root = os.path.splitext(os.path.splitext(base_ome)[0])[0] 
-    z_str = infer_z(root)
+    #z_str = infer_z(root)
+    z_str = '01'
     corr_BG_colors = np.load(os.path.join(os.path.split(omehans_file)[0],'correction_files',f"bg_colors_mask_z{z_str}.npy"))
     subtract_background(str(omehans_file), str(bg_sub), corr_BG_colors)
 
@@ -882,6 +1008,82 @@ def preprocess_colors(omehans_file, colors_location_xzy, nuclei_preprocessed_loc
         laser_correction_Colors_pattern,
         centerPos
     )
+
+    # 3) TRANSFORM (Scale + Rotation + Deskew)
+
+    # Get transforms
+    transformParams = transforms['TransformParams'][0]
+
+    transforms3D = {}
+
+    # The transforms will be acting on zyx1 vectors 
+
+    for ch in range(5):
+
+        # Scale and translation
+        scale = float(transformParams[ch]['Scale'])     #transformParams[ch]['Scale'][0][0]
+        #tx = transformParams[ch]['Translate'][0][0]
+        #ty = transformParams[ch]['Translate'][0][1]
+        print(scale)
+        tz, ty = map(float, transformParams[ch]['Translate'].ravel())
+        tx = 0
+        if ch == 0:
+            tx = 4.5
+
+        Ascale = np.array([
+            [scale, 0.0,   0.0,   tz],
+            [0.0,   scale, 0.0,   ty],
+            [0.0,   0.0,   1.0,   tx],
+            [0.0,   0.0,   0.0,   1.0],
+        ], dtype=float)
+
+        # Rotation
+        gamma = float(transformParams[ch]['Rotation'])
+
+        th = np.deg2rad(gamma)  # convert degrees → radians
+        
+        Arot = np.array([
+            [np.cos(th), -np.sin(th), 0.0, 0.0],
+            [np.sin(th),  np.cos(th), 0.0, 0.0],
+            [0.0,         0.0,        1.0, 0.0],
+            [0.0,         0.0,        0.0, 1.0],
+        ], dtype=float)
+
+        # Shear
+        shear = float(transformParams[ch]['Shear'])
+
+        s = np.deg2rad(shear)  # degrees → radians
+
+        Ashear = np.array([
+            [1.0, np.tan(s), 0.0, 0.0],
+            [0.0, 1.0,       0.0, 0.0],
+            [0.0, 0.0,       1.0, 0.0],
+            [0.0, 0.0,       0.0, 1.0],
+        ], dtype=float)
+
+        # Deskew along xz plane (-14 for splitter, -7 for nuclei cam)
+        if ch == 0:
+            delta = -7
+        else:
+            delta = -14
+
+        d = np.deg2rad(delta)  # degrees → radians
+
+        Adeskew = np.array([
+            [1.0, 0.0,        0.0, 0.0],
+            [0.0, 1.0,        0.0, 0.0],
+            [np.tan(d), 0.0,  1.0, 0.0],
+            [0.0, 0.0,        0.0, 1.0],
+        ], dtype=float)
+
+        transforms3D[ch] = Ascale @ Arot @ Ashear @ Adeskew
+
+    # Apply transforms
+    output_transformed = base.with_name(base.name + "_transformed")
+    output_transformed.mkdir(parents=True, exist_ok=True)
+    apply_transforms3D(str(nuclei_preprocessed_location), str(color_lcorr), transforms3D, output_transformed)
+
+
 
     """# 3) COLOR SPLIT (after correction) → (C=4, X, Zc, Yc)
     #    Use MATLAB-provided center if present.

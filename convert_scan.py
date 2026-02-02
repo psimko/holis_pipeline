@@ -79,7 +79,7 @@ if not os.path.exists(OUTPUT_DIR):
 
 #output_folder_scale = os.path.join(OUTPUT_DIR, f'scale_{SCALE}')  # TODO: do we need scale? Will it always be full resolution?
 
-COLORS_FLI = NUCLEI_FLI.replace('272.fli.zst', '088.fli.zst')
+COLORS_FLI = NUCLEI_FLI.replace('272.fli', '088.fli')           # or NUCLEI_FLI.replace('272.fli.zst', '088.fli.zst')
 
 
 def main():

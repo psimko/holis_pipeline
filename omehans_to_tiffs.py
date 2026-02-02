@@ -20,7 +20,7 @@ def _y_key(p: Path) -> int:
     m = re.search(r'y(\d+)', p.as_posix(), flags=re.IGNORECASE)
     return int(m.group(1)) if m else 10**9
 
-def save_omehans_as_tiffs(channel, processing, omehans_location, tiffs_location):
+def save_omehans_as_tiffs(channel, processing, asVolume, omehans_location, tiffs_location):
 
     if not os.path.exists(tiffs_location):
         os.makedirs(tiffs_location)
@@ -35,6 +35,7 @@ def save_omehans_as_tiffs(channel, processing, omehans_location, tiffs_location)
             None:              nuc_file_pattern,
             "bg_subtracted":   nuc_file_pattern + "_bg_subtracted",
             "laser_corrected": nuc_file_pattern + "_laser_corrected",
+            "transformed":     nuc_file_pattern +  "_transformed", 
             "registered":      color_file_pattern + "_registered",
             "unmixed":         color_file_pattern + "_unmixed",
         }
@@ -43,6 +44,7 @@ def save_omehans_as_tiffs(channel, processing, omehans_location, tiffs_location)
             None:              color_file_pattern,
             "bg_subtracted":   color_file_pattern + "_bg_subtracted",
             "laser_corrected": color_file_pattern + "_laser_corrected",
+            "transformed":     color_file_pattern +  "_transformed", 
             "registered":      color_file_pattern + "_registered",
             "unmixed":         color_file_pattern + "_unmixed",
         }
@@ -71,36 +73,108 @@ def save_omehans_as_tiffs(channel, processing, omehans_location, tiffs_location)
                 plane = image[:, z, :]
                 imwrite(f"{tiffs_location}/stripe_{z:04d}.tif", plane) """
 
+    target_z = 400
+
     for path_ome in paths_ome:
-        image_dask = read_omehans(path_ome)  # (37000, 1024, 1280)
+    #for path_ome in paths: # for raw files
+        image_dask = read_omehans(path_ome)  # (37000, 1024, 1280) or (37000, 512, 640)
         print("Shape of the strip", image_dask.shape)
-        X, Z, Y = image_dask.shape
+        ndim = image_dask.ndim
+
         y_name = path_ome.parent.name
+        #y_name = path_ome.name # for raw files
         out_dir = os.path.join(tiffs_location, y_name)
         os.makedirs(out_dir, exist_ok=True)
-        for z in range(Z):
-            if not os.path.exists(f"{out_dir}/stripe_{z:04d}.tif"):
-                target_z = 800
-                if z == target_z: #if z % 100 == 0:
+
+        if ndim ==3:
+            # shape: (X, Z, Y)
+            X, Z, Y = image_dask.shape
+            if asVolume == 'False':
+                for z in range(Z):
+                    if z != target_z:
+                        continue
+                    if channel==0:
+                        out_path = os.path.join(out_dir, f"stripe_{z:04d}.tif")
+                    else:
+                        out_path = os.path.join(out_dir, f"stripe_z{z:04d}_colors.tif")
+                    if os.path.exists(out_path):
+                        continue
+
                     print(f'Saving plane={z}')
                     print("Reading into memory")
                     plane = image_dask[:, z, :].astype("float32").compute() 
-                    print("done")
-                    imwrite(f"{out_dir}/stripe_{z:04d}.tif", plane)
-                else:
-                    continue
+                    print("Done")
+                    imwrite(out_path, plane)
+            elif asVolume == 'True':
+                    if channel==0:
+                        out_path = os.path.join(out_dir, f"vol.tif")
+                    else:
+                        out_path = os.path.join(out_dir, f"vol_colors.tif")
+                    if os.path.exists(out_path):
+                        continue
+
+                    print(f'Saving volume {y_name}')
+                    print("Reading into memory")
+                    vol = image_dask[:, :, :].astype("float32").compute() 
+                    print("Done")
+                    imwrite(out_path, vol)
+            else:
+                print('asVolume must be set to True or False')
+
+
+        elif ndim == 4:
+            # shape: (C, X, Z, Y)
+            C, X, Z, Y = image_dask.shape
+            if asVolume == 'False':
+                for z in range(Z):
+                    if z != target_z:
+                        continue
+
+                    for c in range(C):
+                        out_path = os.path.join(out_dir, f"stripe_c{c:02d}_z{z:04d}.tif")
+                        if os.path.exists(out_path):
+                            continue
+
+                        print(f"Saving plane z={z}, channel={c}")
+                        print("Reading into memory")
+                        plane = image_dask[c, :, z, :].astype("float32").compute()
+                        print("done")
+                        imwrite(out_path, plane)
+            elif asVolume == 'True':
+                for c in range(C):
+                    if channel==0:
+                        out_path = os.path.join(out_dir, f"vol.tif")
+                    else:
+                        out_path = os.path.join(out_dir, f"vol_colors_ch{c}.tif")
+                    if os.path.exists(out_path):
+                        continue
+
+                    print(f'Saving volume channel{c} to {y_name}')
+                    print("Reading into memory")
+                    vol = image_dask[c, :, :, :].astype("float32").compute() 
+                    print("Done")
+                    imwrite(out_path, vol)
+            else:
+                print('asVolume must be set to True or False')
+
+        else:
+            raise ValueError(f"Unsupported image shape {image_dask.shape}")
 
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("channel", type=int, default=0)
-    parser.add_argument("processing", nargs="?", default=None)
+    #parser.add_argument("processing", nargs="?", default=None)
+    parser.add_argument("processing", nargs="?", default=None, type=lambda s: None if s.lower() in ("none", "null", "") else s)
+    parser.add_argument("asVolume", nargs="?", default=None)
     parser.add_argument("source_dir")
     parser.add_argument("output_path")
     args = parser.parse_args()
 
-    save_omehans_as_tiffs(args.channel, args.processing, args.source_dir, args.output_path)  
+    save_omehans_as_tiffs(args.channel, args.processing, args.asVolume, args.source_dir, args.output_path)  
 
 
-        # example use: python omehans_to_tiffs.py 0 'bg_subtracted' '/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_processed/' '/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_tiffs_peter/'
+    # example use: python omehans_to_tiffs.py 0 'bg_subtracted' 'True' '/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_processed/' '/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_tiffs_peter/'
+
+    #python omehans_to_tiffs.py 1 'transformed' 'True' '/bil/proj/rf1hillman/results_peter/results_Slab7_test/out_processed/' '/bil/proj/rf1hillman/results_peter/results_Slab7_test/out_tiffs/transformed/'
