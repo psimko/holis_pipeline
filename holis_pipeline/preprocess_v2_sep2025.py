@@ -108,7 +108,7 @@ def _clip16(a):
 def _safe_div(a: np.ndarray, b: np.ndarray, eps: float = 1e-6):
     return a / (b + eps)
 
-def subtract_background(input_location, output_location, bg_zy: np.ndarray):
+def subtract_background(input_location, output_location, bg_zy: np.ndarray, save=True):
 
     """
     Input: data .omehans (X,Z,Y), dark frames (.npy) (Z,Y) (1 file per nuclei+colors fli pair), dark frames will be broadcast across X 
@@ -116,9 +116,9 @@ def subtract_background(input_location, output_location, bg_zy: np.ndarray):
     """
 
     omehans_root = os.path.join(output_location, 'omehans')
-    if os.path.exists(os.path.join(omehans_root, '0', '0', '0')):
+    if save and os.path.exists(os.path.join(omehans_root, '0', '0', '0')):
         print("BG already subtracted previously")
-        return
+        return read_omehans(omehans_root)
 
     print("Subtracting BG...")
 
@@ -140,15 +140,18 @@ def subtract_background(input_location, output_location, bg_zy: np.ndarray):
     if bg_zy.shape != (Z, Y):
         raise ValueError(f"BG mask must be (Z,Y)={Z,Y}, got {bg_zy.shape}")
     bg_zy_d = da.from_array(bg_zy, chunks=(vol_xzy.chunks[1], vol_xzy.chunks[2])).astype('float32') #- 1024.0
-    out = da.maximum(vol_xzy.astype('float32') - bg_zy_d[None, :, :], 0)
+    #out = da.maximum(vol_xzy.astype('float32') - bg_zy_d[None, :, :], 0)
+    out = vol_xzy.astype('float32') - bg_zy_d[None, :, :]
     #####################
 
     # Save
-    try:
-        #write_omehans(omehans_root, _clip16(out))           #Use when using numpy version
-        write_omehans_from_dask(omehans_root, da.clip(out, 0, 65535).astype('uint16')) 
-    except zarr.errors.ContainsArrayError:
-        print(".omehans array already exists")
+    if save:
+        try:
+            #write_omehans(omehans_root, _clip16(out))           #Use when using numpy version
+            write_omehans_from_dask(omehans_root, da.clip(out.compute(), 0, 65535).astype('uint16')) 
+        except zarr.errors.ContainsArrayError:
+            print(".omehans array already exists")
+        print("Saved BG-subtracted file")
     #try:
     #    write_zarr(os.path.join(output_location, 'zarr'), _clip16(out))
     #except zarr.errors.ContainsArrayError:
@@ -156,56 +159,66 @@ def subtract_background(input_location, output_location, bg_zy: np.ndarray):
 
     # tifffile.imwrite(os.path.join(output_location, "bg_subtracted.tif"), image_np_array_bgSubtracted.astype('uint16'))
 
-    print("Saved BG-subtracted file")
+
+    return out
+
 
     #return image_np_array_bgSubtracted
 
 
 
-def laser_correction_nuclei(input_location, output_location, pattern_zy):
+def laser_correction_nuclei(input_or_vol, output_location, pattern_zy, save=True):               # input can be volume or location
     """
     Input:
         - flattened .omehans (X,Z,Y)
         - laser pattern matrix (Z,Y)
-        - absorption matrix (n_fluorophores, n_lasers) - (5x4) - first row   for nuclei
-        - mixing (fluorescence) matrix (n_fluorophores, n_channels) - (5x5) - first column for nuclei
     Output: corrected .omehans the same shape as input
     """
 
     root = os.path.join(output_location, 'omehans')
-    if os.path.exists(os.path.join(root, '0', '0', '0')):
+    if save and os.path.exists(os.path.join(root, '0', '0', '0')):
         print("Laser pattern corrected (nuclei) previously")
-        return
+        corr = read_omehans(root)
+        zarr_path = os.path.join(output_location, 'zarr')
+        if not os.path.exists(zarr_path):
+            write_zarr(zarr_path, _clip16(corr.compute()))
+        return corr
+        #return read_omehans(root)
 
     print("Laser correction (nuclei): XZY vol ÷ ZY pattern")
-    img = read_omehans(os.path.join(input_location, "omehans")).compute().astype(np.float32)  # (X,Z,Y)
+    #img = read_omehans(os.path.join(input_location, "omehans")).compute().astype(np.float32)  # (X,Z,Y)
+
+    # Accept either a path string or an already-loaded array/dask array
+    if isinstance(input_or_vol, (str, Path)):
+        img = read_omehans(os.path.join(str(input_or_vol), "omehans")).compute().astype(np.float32)
+    elif isinstance(input_or_vol, da.Array):
+        img = input_or_vol
+    else:
+        img = da.from_array(np.asarray(input_or_vol, dtype=np.float32))
+
     X, Z, Y = img.shape
-    #if ff_zy.shape != (Z, Y) or pattern_zy.shape != (Z, Y):
-    #    raise ValueError("FF and pattern must be (Z,Y)")
-
-    #ff = ff_zy.astype(np.float32)
     pat = pattern_zy.astype(np.float32)
-
     if pat.shape != (Z, Y):
         raise ValueError(f"pattern_zy must be (Z,Y)=({Z},{Y}) got {pat.shape}")
-
-    #ff_corr = _safe_div(img, ff)
-    #corr = _safe_div(ff_corr, pat)
-    corr = _safe_div(img, pat)
+    #corr = _safe_div(img, pat)
+    pat_d = da.from_array(pat, chunks=(img.chunks[1], img.chunks[2]))
+    corr = img / (pat_d[None, :, :] + 1e-6)  # ← LAZY division
 
     # Save
-    try:
-        write_omehans(root, _clip16(corr))
-    except zarr.errors.ContainsArrayError:
-        print(".omehans already exists")
+    if save:
+        try:
+            write_omehans(root, _clip16(corr.compute()))
+        except zarr.errors.ContainsArrayError:
+            print(".omehans already exists")
+        print("Saved laser-pattern-corrected (nuclei) file")
     #try:
     #    write_zarr(os.path.join(output_location, 'zarr'), _clip16(corr))
     #except zarr.errors.ContainsArrayError:
     #    print(".zarr already exists")
     #tifffile.imwrite(os.path.join(output_location, 'laser_corrected.tif'), np.round(corrected_data).astype('uint16'))
-    print("Saved laser-pattern-corrected (nuclei) file")
+    return corr 
 
-def laser_correction_colors(input_location, output_location, pattern_czy, center_pos=None):
+def laser_correction_colors(input_or_vol, output_location, pattern_czy, center_pos=None, save=True):
     """
     Laser correction for color splitter data.
 
@@ -217,14 +230,27 @@ def laser_correction_colors(input_location, output_location, pattern_czy, center
 
     root = os.path.join(output_location, "omehans")
     # if corrected already present, skip
-    if os.path.exists(os.path.join(root, "0", "0", "0")):
+    if save and os.path.exists(os.path.join(root, "0", "0", "0")):
         print("Laser pattern corrected (colors) previously")
-        return
+        corr = read_omehans(root)
+        zarr_path = os.path.join(output_location, 'zarr')
+        if not os.path.exists(zarr_path):
+            write_zarr(zarr_path, _clip16(corr.compute()))
+        return corr
+        #return read_omehans(root)
 
     print("Laser correction (colors): split (X,Z,Y) -> (C,X,Zc,Yc) and divide by (C,Zc,Yc) pattern")
 
     # 1) load raw splitter volume (X,Z,Y)
-    vol = read_omehans(os.path.join(input_location, "omehans")).compute().astype(np.float32)
+    #vol = read_omehans(os.path.join(input_location, "omehans")).compute().astype(np.float32)
+
+    # Accept either a path string or an already-loaded array/dask array
+    if isinstance(input_or_vol, (str, Path)):
+        vol = read_omehans(os.path.join(str(input_or_vol), "omehans")).compute().astype(np.float32)
+    elif isinstance(input_or_vol, da.Array):
+        vol = input_or_vol.compute().astype(np.float32)
+    else:
+        vol = np.asarray(input_or_vol, dtype=np.float32)
     X, Z, Y = vol.shape
 
     # 2) split into 4 quadrants in (Z,Y), same as split_color_channels
@@ -258,29 +284,47 @@ def laser_correction_colors(input_location, output_location, pattern_czy, center
     corr = _safe_div(colors_cxzy, pat_cxzy)  # same helper as nuclei
 
     # 4) save corrected 4-channel omehans
-    try:
-        write_omehans(root, _clip16(corr))   # corr shape (4,X,Zc,Yc)
-    except zarr.errors.ContainsArrayError:
-        print(".omehans already exists (colors, corrected)")
+    if save:
+        try:
+            write_omehans(root, _clip16(corr))   # corr shape (4,X,Zc,Yc)
+        except zarr.errors.ContainsArrayError:
+            print(".omehans already exists (colors, corrected)")
+    print("Saved laser-pattern-corrected colors (C=4, X, Zc, Yc)")
 
     # optional zarr, like in split_color_channels
     #write_zarr(os.path.join(output_location, "zarr"), _clip16(corr))
+    return corr
+    
 
-    print("Saved laser-pattern-corrected colors (C=4, X, Zc, Yc)")
-
-def apply_transforms3D(nuclei_location: str, colors_location: str, transforms3D: dict, output_location: str): 
+def apply_transforms3D(nuclei_loc_or_vol, colors_loc_or_vol, transforms3D: dict, output_location: str, save=True): 
 
     root = os.path.join(output_location, 'omehans')
-    if os.path.exists(os.path.join(root, '0', '0', '0')):
+    if save and os.path.exists(os.path.join(root, '0', '0', '0')):
         print("Applied transformations previously")
-        return
+        corr = read_omehans(root)
+        zarr_path = os.path.join(output_location, 'zarr')
+        if not os.path.exists(zarr_path):
+            write_zarr(zarr_path, _clip16(corr.compute()))
+        return corr
+        #return read_omehans(root)
 
     out_shape = None
     out_origin = None
     VolDataAll = None
 
-    vol_nuc = read_omehans(os.path.join(nuclei_location, "omehans")).compute().astype(np.float32)
-    vol_colors = read_omehans(os.path.join(colors_location, "omehans")).compute().astype(np.float32)
+    # Accept either a path string or an already-loaded array/dask array
+    #vol_nuc = read_omehans(os.path.join(nuclei_location, "omehans")).compute().astype(np.float32)
+    #vol_colors = read_omehans(os.path.join(colors_location, "omehans")).compute().astype(np.float32)
+    if isinstance(nuclei_loc_or_vol, (str, Path)) and isinstance(colors_loc_or_vol, (str, Path)) :
+        vol_nuc = read_omehans(os.path.join(nuclei_loc_or_vol, "omehans")).compute().astype(np.float32)
+        vol_colors = read_omehans(os.path.join(colors_loc_or_vol, "omehans")).compute().astype(np.float32)
+    elif isinstance(nuclei_loc_or_vol, da.Array) and isinstance(colors_loc_or_vol, da.Array):
+        vol_nuc  = nuclei_loc_or_vol.compute().astype(np.float32)
+        vol_colors = colors_loc_or_vol.compute().astype(np.float32)
+    else:
+        vol_nuc  = np.asarray(nuclei_loc_or_vol, dtype=np.float32)
+        vol_colors = np.asarray(colors_loc_or_vol, dtype=np.float32)
+
 
     vol_nuc_zyx = np.transpose(vol_nuc, (1, 2, 0))                    # -> (Z,Y,X)
     vol_colors_czyx = np.transpose(vol_colors, (0, 2, 3, 1))    
@@ -305,10 +349,10 @@ def apply_transforms3D(nuclei_location: str, colors_location: str, transforms3D:
             im = vol_colors_czyx[ch-1].astype(np.float32)   # ch=1..4 -> idx=0..3
             tempVol, _, _ = imwarp_like(im, A, out_shape=out_shape, out_origin=out_origin, order=3)
 
-        cropped = tempVol[z1:tempVol.shape[0]-z2, y1:tempVol.shape[1]-y2, :]
+        #cropped = tempVol[z1:tempVol.shape[0]-z2, y1:tempVol.shape[1]-y2, :]
         #cropped = tempVol[:, y1:tempVol.shape[1]-y2, z1:tempVol.shape[2]-z2]
         #cropped = tempVol[:, z1:tempVol.shape[1]-z2, y1:tempVol.shape[2]-y2]
-        #cropped = tempVol
+        cropped = tempVol
 
         if VolDataAll is None:
             VolDataAll = np.zeros((5,) + cropped.shape, dtype=np.float32)
@@ -317,15 +361,18 @@ def apply_transforms3D(nuclei_location: str, colors_location: str, transforms3D:
 
         VolDataAll_xzy = np.transpose(VolDataAll, (0, 3, 1, 2)) 
 
-    try:
-        write_omehans(root, _clip16(VolDataAll_xzy))   # corr shape (5,X,Zc,Yc)
-    except zarr.errors.ContainsArrayError:
-        print(".omehans already exists (colors, corrected)")
+    if save:
+        try:
+            write_omehans(root, _clip16(VolDataAll_xzy))   # corr shape (5,X,Zc,Yc)
+        except zarr.errors.ContainsArrayError:
+            print(".omehans already exists (colors, corrected)")
+        print("Saved transformed images (C=5, X, Zc, Yc)")
 
     # optional zarr, like in split_color_channels
     #write_zarr(os.path.join(output_location, "zarr"), _clip16(corr))
+    return VolDataAll_xzy
 
-    print("Saved transformed images (C=5, X, Zc, Yc)")
+    
 
 
 
@@ -594,7 +641,7 @@ def normalize_by_registered_max_dict(
         ch_max = np.maximum(ch_max, eps)  # avoid div-by-zero
         maskRegMax[L] = ch_max
 
-        # 4) normalize the UNregistered originals
+        # 4) normalize the unregistered originals
         nuclei_norm[L] = (nuc / ch_max[0]).astype(np.float32, copy=False)
         colors_norm[L] = (col / ch_max[1:, None, None]).astype(np.float32, copy=False)
 
@@ -927,7 +974,7 @@ M_inv = np.linalg.inv(Flch_rel)
     
 
 
-def preprocess_nuclei(omehans_file, nuclei_location_xzy):
+def preprocess_nuclei(omehans_file, nuclei_location_xzy, cfg):
     """
     nuclei_location_xzy: folder with nuclei omehans (XZY layout)
     Returns path to laser-corrected nuclei (XZY) folder.
@@ -940,11 +987,14 @@ def preprocess_nuclei(omehans_file, nuclei_location_xzy):
     #Get z and define mask file names
     base_ome = os.path.basename(omehans_file)  # get file name only
     root = os.path.splitext(os.path.splitext(base_ome)[0])[0]    # get file name without extensions
-    #z_str = infer_z(root)  # use this when running on a whole slab
-    z_str = '01' 
+    z_str = infer_z(root)  # use this when running on a whole slab
+    #z_str = '01' 
 
     corr_BG_nuclei = np.load(os.path.join(os.path.split(omehans_file)[0] ,'correction_files',f"bg_nuclei_mask_z{z_str}.npy"))    #  load bg correction mask
-    subtract_background(str(omehans_file), str(bg_sub), corr_BG_nuclei)
+    
+    # BG subtraction — save only if flag set
+    #subtract_background(str(omehans_file), str(bg_sub), corr_BG_nuclei)
+    vol_bg = subtract_background(str(omehans_file), str(bg_sub), corr_BG_nuclei, save=cfg.save_bg_subtracted)
 
     # Laser correction (ZY pattern)
 
@@ -960,15 +1010,24 @@ def preprocess_nuclei(omehans_file, nuclei_location_xzy):
 
 
     # Apply correction
-    laser_correction_nuclei(
-        str(bg_sub),
+    #laser_correction_nuclei(
+    #    str(bg_sub),
+    #    str(laser_corr),
+    #    laser_correction_Nuclei_pattern
+    #)
+
+    vol_lc = laser_correction_nuclei(
+        vol_bg,                   # pass array directly instead of path
         str(laser_corr),
-        laser_correction_Nuclei_pattern
+        laser_correction_Nuclei_pattern,
+        save=cfg.save_laser_corrected
     )
-    return str(laser_corr)
+
+    #return str(laser_corr)
+    return vol_lc if not cfg.save_laser_corrected else str(laser_corr)
 
 
-def preprocess_colors(omehans_file, colors_location_xzy, nuclei_preprocessed_location):
+def preprocess_colors(omehans_file, colors_location_xzy, nuclei_preprocessed_location, cfg):
     """
     colors_location_xyz: folder with *color* OME-HANS at colors_location_xyz/omehans (XZY).
     nuclei_preprocessed_location: output of preprocess_nuclei(...), used for registration.
@@ -982,10 +1041,11 @@ def preprocess_colors(omehans_file, colors_location_xzy, nuclei_preprocessed_loc
     #Get z and define mask file names
     base_ome = os.path.basename(omehans_file)  
     root = os.path.splitext(os.path.splitext(base_ome)[0])[0] 
-    #z_str = infer_z(root)
-    z_str = '01'
+    z_str = infer_z(root)
+    #z_str = '01'
     corr_BG_colors = np.load(os.path.join(os.path.split(omehans_file)[0],'correction_files',f"bg_colors_mask_z{z_str}.npy"))
-    subtract_background(str(omehans_file), str(bg_sub), corr_BG_colors)
+    #subtract_background(str(omehans_file), str(bg_sub), corr_BG_colors)
+    vol_bg = subtract_background(str(omehans_file), str(bg_sub), corr_BG_colors, save=cfg.save_bg_subtracted)
 
     # 2) LASER CORRECTION on full XZY (single YZ mask for the whole chip → applies to all 4 quadrants)
     color_lcorr = base.with_name(base.name + "_laser_corrected")
@@ -1002,11 +1062,19 @@ def preprocess_colors(omehans_file, colors_location_xzy, nuclei_preprocessed_loc
     center_arr = np.atleast_1d(center_raw).astype(int).ravel()
     centerPos = (int(center_arr[0]), int(center_arr[1]))  
 
-    laser_correction_colors(
-        str(bg_sub),
+    #laser_correction_colors(
+    #    str(bg_sub),
+    #    str(color_lcorr),
+    #    laser_correction_Colors_pattern,
+    #    centerPos
+    #)
+
+    vol_lc = laser_correction_colors(
+        vol_bg,                   # pass array directly instead of path
         str(color_lcorr),
         laser_correction_Colors_pattern,
-        centerPos
+        centerPos,
+        save=cfg.save_laser_corrected
     )
 
     # 3) TRANSFORM (Scale + Rotation + Deskew)
@@ -1051,7 +1119,6 @@ def preprocess_colors(omehans_file, colors_location_xzy, nuclei_preprocessed_loc
 
         # Shear
         shear = float(transformParams[ch]['Shear'])
-
         s = np.deg2rad(shear)  # degrees → radians
 
         Ashear = np.array([
@@ -1081,7 +1148,15 @@ def preprocess_colors(omehans_file, colors_location_xzy, nuclei_preprocessed_loc
     # Apply transforms
     output_transformed = base.with_name(base.name + "_transformed")
     output_transformed.mkdir(parents=True, exist_ok=True)
-    apply_transforms3D(str(nuclei_preprocessed_location), str(color_lcorr), transforms3D, output_transformed)
+    #apply_transforms3D(str(nuclei_preprocessed_location), str(color_lcorr), transforms3D, output_transformed)
+
+    vol_transformed = apply_transforms3D(
+        nuclei_preprocessed_location, 
+        vol_lc, 
+        transforms3D, 
+        output_transformed, 
+        save=cfg.save_transformed
+        )
 
 
 
@@ -1122,5 +1197,5 @@ def preprocess_colors(omehans_file, colors_location_xzy, nuclei_preprocessed_loc
     unmixed.mkdir(parents=True, exist_ok=True)
     unmix_channels(str(registered), str(unmixed), M_inv, batch_size=10_000_000) """
 
-    return str(color_lcorr)
+    return vol_transformed if not cfg.save_transformed else str(output_transformed)
 

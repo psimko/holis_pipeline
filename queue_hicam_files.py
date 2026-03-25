@@ -17,6 +17,9 @@ import subprocess
 from pathlib import Path
 from dataclasses import dataclass
 from get_correction_masks_hicam_hemibrain1 import normalize_patterns, mix_patterns
+import json
+import base64
+from holis_pipeline.preprocessing_functions import infer_z, infer_y
 
 
 
@@ -24,12 +27,17 @@ from get_correction_masks_hicam_hemibrain1 import normalize_patterns, mix_patter
 @dataclass(frozen=True) # this disallows mutability
 class Config:
     # What to do
-    convert_to_ome: bool = False
+    convert_to_ome: bool = True
     get_bg_masks: bool = False
     get_patterns: bool = False
     norm_and_mix_patterns: bool = False
-    process: bool = True
+    process: bool = False
     segment: bool = False
+
+    # Save intermediate results
+    save_bg_subtracted: bool = False
+    save_laser_corrected: bool = False
+    save_transformed: bool = False
 
     # Transforms and other .mat info path
     transforms_matlab_path = "/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Matlab_info/NPBB328_colorMerge_transforms.mat"   
@@ -37,25 +45,25 @@ class Config:
 
     # Don't forget to change the dates too (in the write_slurm script as well) (not just the slab number)
     # IO — convert fli to omehans
-    input_dir_fli: str = "/bil/proj/rf1hillman/2025_09_04_HOLiS_NPBB328_Cortex_Slab7_test_tissueXYZ/"                            #"/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab6/2025_08_22_HOLiS_NPBB328_Cortex_Slab06/"
-    output_dir_ome: str = "/bil/proj/rf1hillman/results_peter/results_Slab7_test/"                                               #"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/"   should be the same as input for processing
-    file_pattern_fli: str = 'NPBB328-Cortex-Slab07-ROI1-run*-z*-y*-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli'       #'*NPBB328-Cortex-Slab06-run*-z01-y*-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli.zst'
+    input_dir_fli: str = "/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab16/2026_03_12_HOLiS_NPBB328_Cortex_Slab16/"        #"/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab01_rerun/2025_09_23_HOLiS_NPBB328_Cortex_Slab01/"               #"/bil/proj/rf1hillman/2025_09_04_HOLiS_NPBB328_Cortex_Slab7_test_tissueXYZ/"                            
+    output_dir_ome: str = "/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab16/"                                            #"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab01/"                                                  #"/bil/proj/rf1hillman/results_peter/results_Slab7_test/"  should be the same as input for processing
+    file_pattern_fli: str = '*NPBB328-Cortex-Slab16-run*-z*-y*-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-032.fli.zst' #'*NPBB328-Cortex-Slab01-run*-z*-y*-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli.zst'       #'NPBB328-Cortex-Slab07-ROI1-run*-z*-y*-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli' 
     
     # IO — background masks
-    input_dir_bg: str = "/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab7/2025_09_02_HOLiS_NPBB328_Cortex_Slab07/"              #"/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab6/2025_08_22_HOLiS_NPBB328_Cortex_Slab06/"  # where .fli files are, should be in the same folder as the raw files
-    output_dir_bg: str = "/bil/proj/rf1hillman/results_peter/results_Slab7_test/correction_files/"                                 #"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/correction_files/"
-    file_pattern_bg: str = "NPBB328-Cortex-Slab07-run*-z*-y000-darkFrames_HiCAM FLUO_1875-ST-272.fli.zst"                      #"NPBB328-Cortex-Slab06-run*-z*-y000-darkFrames_HiCAM FLUO_1875-ST-272.fli.zst"
+    input_dir_bg: str = "/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab16/2026_03_12_HOLiS_NPBB328_Cortex_Slab16/" #"/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab01_rerun/2025_09_23_HOLiS_NPBB328_Cortex_Slab01/"              #"/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab6/2025_08_22_HOLiS_NPBB328_Cortex_Slab06/"  # where .fli files are, should be in the same folder as the raw files
+    output_dir_bg: str = "/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab16/correction_files/"                                 #"/bil/proj/rf1hillman/results_peter/results_Slab7_test/correction_files/"
+    file_pattern_bg: str = "NPBB328-Cortex-Slab16-run*-z*-y000-darkFrames_HiCAM FLUO_1875-ST-032.fli.zst"         #"NPBB328-Cortex-Slab01-run*-z*-y000-darkFrames_HiCAM FLUO_1875-ST-272.fli.zst"                      #"NPBB328-Cortex-Slab07-run*-z*-y000-darkFrames_HiCAM FLUO_1875-ST-272.fli.zst"  
 
     # IO — laser patterns
-    input_dir_lasers: str = "/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab7/"                                                  #"/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab6/" # directory in which subdirectories for different zs are located
-    output_dir_lasers: str = "/bil/proj/rf1hillman/results_peter/results_Slab7_test/correction_files/laser_patterns/"             #"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/correction_files/laser_patterns/"
-    subfolder_pattern_lasers: str = "2025_09_02_HOLiS_NPBB328_Cortex_Slab07_corrections*"
+    input_dir_lasers: str = "/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab01_rerun/"                                                  #"/bil/proj/rf1hillman/HOLiS_NPBB328_Cortex/Slab6/" # directory in which subdirectories for different zs are located
+    output_dir_lasers: str = "/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab01/correction_files/laser_patterns/"               #"/bil/proj/rf1hillman/results_peter/results_Slab7_test/correction_files/laser_patterns/"
+    subfolder_pattern_lasers: str = "2025_09_23_HOLiS_NPBB328_Cortex_Slab01_corrections*"                                        #"2025_09_02_HOLiS_NPBB328_Cortex_Slab07_corrections*"
     file_pattern_lasers: str = "epoxy-mix-run*HiCAM FLUO_1875-ST-272.fli.zst"                                                   #"epoxy-mix-run*HiCAM FLUO_1875-ST-272.fli.zst" 
 
     # IO — processing
-    input_dir_process: str = "/bil/proj/rf1hillman/results_peter/results_Slab7_test/"                                           #"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/"
-    output_dir_process: str = "/bil/proj/rf1hillman/results_peter/results_Slab7_test/out_processed/"                            #"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_processed_bg_dec1/"
-    file_pattern_process = "*-272.fli"
+    input_dir_process: str = "/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab01/"                                          #"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/" "/bil/proj/rf1hillman/results_peter/results_Slab7_test/" 
+    output_dir_process: str = "/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab01/out_processed_z05/"                    #"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_processed_bg_dec1/" "/bil/proj/rf1hillman/results_peter/results_Slab7_test/out_processed/"
+    file_pattern_process = "*-272.fli*"
 
     # IO — segmentation
     input_dir_segment: str = "/bil/proj/rf1hillman/results_peter/results_Slab7_test/out_processed/"                             #*"/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_processed_bg_dec1/"
@@ -85,7 +93,7 @@ slurm_template = """#!/bin/bash
 #SBATCH -e {stderr_log}
 set -euo pipefail
 
-"{python_path}" "{script_path}" "{input_file}" "{output_dir}"
+"{python_path}" "{script_path}" "{input_file}" "{output_dir}" "{save_flags_json}"
 """
 # ----------------------------------------
 
@@ -100,6 +108,8 @@ def write_slurm_script(cfg: Config, input_dir: str, output_dir: str, file_patter
         file_glob = glob(os.path.join(input_dir, "**", file_pattern), recursive=True) 
     print(">>>>>>>>>>> Files:", len(file_glob))
     for filename in file_glob:
+        allowed_z = {"05"}
+        #allowed_y = {"001", "002", "003", "004", "005", "006", "007", "008", "009", "010"}
         base = os.path.basename(filename)                                   # e.g. NPBB328-...-272.fli.zst
         #root = os.path.splitext(os.path.splitext(base)[0])[0]               # strip .zst then .fli 
         if base.endswith(".fli.zst"):               # take care of both .fli and .zst.fli extensions
@@ -109,6 +119,10 @@ def write_slurm_script(cfg: Config, input_dir: str, output_dir: str, file_patter
         else:
             root = os.path.splitext(base)[0]
         print(root)
+
+        z = infer_z(root)   
+        if z not in allowed_z:
+            continue
 
         root = re.sub(r'\s+', '_', root)          # replace spaces
         root = re.sub(r'[^A-Za-z0-9._-]+', '_', root)  # extra safety
@@ -120,6 +134,16 @@ def write_slurm_script(cfg: Config, input_dir: str, output_dir: str, file_patter
         stdout_log = os.path.join(logs_dir, f"{root}.out")
         stderr_log = os.path.join(logs_dir, f"{root}.err")
 
+        config_dict = {
+            "save_bg_subtracted": cfg.save_bg_subtracted,
+            "save_laser_corrected": cfg.save_laser_corrected,
+            "save_transformed": cfg.save_transformed,
+        }
+
+        # Encode as base64 to avoid bash escaping issues
+        config_json = json.dumps(config_dict)
+        config_b64 = base64.b64encode(config_json.encode()).decode()
+
         job_script_content = slurm_template.format(
             job_name=job_name,
             mem_gb=cfg.mem_gb,
@@ -130,7 +154,8 @@ def write_slurm_script(cfg: Config, input_dir: str, output_dir: str, file_patter
             input_file=filename, 
             output_dir=output_dir,
             stdout_log=stdout_log,
-            stderr_log=stderr_log
+            stderr_log=stderr_log,
+            save_flags_json=config_b64
         ) 
         
         job_script_path = os.path.join(output_dir, f"job_{root}.sh")

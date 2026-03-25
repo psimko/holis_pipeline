@@ -11,6 +11,7 @@ from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
 from holis_pipeline.preprocessing_functions import read_data_file
 from holis_pipeline.read_data import read_fli_as_zarr
 from holis_pipeline.utils.zarr_related import read_omehans, write_omehans, write_zarr
+import dask
 
 def _y_key(p: Path) -> int:
     """Numeric sort by yNNN anywhere in the path/name; non-matches last."""
@@ -22,38 +23,38 @@ def _norm_z(z_idx):
         raise ValueError("For 2D stitching, pass a single z index, not 'all'.")
     return int(z_idx)
 
-def load_and_crop(processing, path, channel=0, z_idx='all', crop_top=0, crop_bottom=0, three_d_layout="XYZ"):
-    """
-    Load a 3D/4D volume and crop along Y.
-    - 4D assumed (C,Z,Y,X) → pick `channel` then crop Y (axis 2 of the sliced volume)
-    - 3D assumed (X,Y,Z) if three_d_layout='XYZ' (crop middle axis),
-                 or (Z,Y,X) if three_d_layout='ZYX' (crop first axis)
-    """
-    arr = read_omehans(path)  
-    arr.compute()
-    print(arr.shape)
+def load_and_crop(processing, path, channel=0, z_idx=None, crop_top=0, crop_bottom=0, three_d_layout="XYZ"):
+    arr = read_omehans(path)  # dask array
 
-    # build end index once to avoid -0 (which would mean 0)
+    if getattr(arr, "ndim", 0) < 3 or 0 in getattr(arr, "shape", ()):
+        print(f"[SKIP EMPTY] {path} shape={getattr(arr,'shape',None)}")
+        return None
+
+    print("shape:", arr.shape)
+
     y_end = None if crop_bottom <= 0 else -crop_bottom
     y_start = crop_top
 
-    z = slice(None) if z_idx is None else int(z_idx)
+    # choose z slice
+    if z_idx in (None, "all"):
+        z = slice(None)
+    else:
+        z = int(z_idx)
 
-    if processing in ['registered', 'unmixed']:
-        # This means the file is either _registered or _unmixed which means shape is (C,Z,Y,X)
-        img = arr[channel]              # -> (Z, Y, X)   
-        return img[z, y_start:y_end, :]
+    if processing in ['registered', 'unmixed','transformed']:
+        # arr: (C, Z, Y, X)
+        img = arr[int(channel)]                    # (Z, Y, X) (still lazy)
+        out = img[z, y_start:y_end, :]             # lazy slice
 
-    elif processing in [None, 'bg_subtracted', 'laser_corrected']:
-        if three_d_layout.upper() == "XYZ":
-            # This means th file has either no suffix or _bg_subtracted or _laser_corrected which means shape is (X, Y, Z)
-            #return arr[:, y_start:y_end, z]
-            return arr[:, z, y_start:y_end]
-        elif three_d_layout.upper() == "ZYX":
-            # (Z, Y, X) - this should not happen with the current preprocessing (Oct 2025)
-            return arr[z, y_start:y_end, :]
-        else:
-            raise ValueError("three_d_layout must be 'XYZ' or 'ZYX'")
+    elif processing in [None, 'bg_subtracted', 'laser_corrected', 'transformed']:
+        # your actual layout: (X, Z, Y) based on your use below
+        out = arr[:, z, y_start:y_end]             # (X, Y) if z is int; lazy slice
+
+    else:
+        raise ValueError(f"Unknown processing: {processing}")
+
+    # compute ONLY what you sliced
+    return out.compute()
 
 
 def stitch_z_plane(channel, z_idx, processing, source_dir, output_path, crop_top, crop_bottom):
@@ -100,8 +101,29 @@ def stitch_z_plane(channel, z_idx, processing, source_dir, output_path, crop_top
     num_scans = len(paths_ome)
     for path in paths_ome[:num_scans]:
         print(path)
-    tiles = [load_and_crop(processing=processing, path=p, channel=channel, z_idx=z_idx, crop_top=crop_top, crop_bottom=crop_bottom) for p in paths_ome[0:num_scans]]
-    composite = np.concatenate(tiles, axis=1)  # Stack accros y
+    tiles = []
+    tiles = [dask.delayed(load_and_crop)(processing, p, channel, z_idx, crop_top, crop_bottom) for p in paths_ome]
+    tiles = list(dask.compute(*tiles))
+
+    # Filter out bad tiles
+    clean_tiles = []
+    for t in tiles:
+        if t is None:
+            continue
+        if not isinstance(t, np.ndarray):
+            continue
+        if t.ndim != 2:
+            print(f"[SKIP NON-2D] shape={getattr(t, 'shape', None)}")
+            continue
+        if 0 in t.shape:
+            print(f"[SKIP EMPTY] shape={t.shape}")
+            continue
+        clean_tiles.append(t)
+
+    if len(clean_tiles) == 0:
+        raise RuntimeError("No valid tiles to concatenate.")
+
+    composite = np.concatenate(clean_tiles, axis=1)
 
     # Normalize
     composite = (composite - composite.min()) / (composite.max() - composite.min())
@@ -117,7 +139,7 @@ def stitch_z_plane(channel, z_idx, processing, source_dir, output_path, crop_top
     arr16 = (composite * 65535).astype('uint16')
     arr16 = asnumpy(arr16)   # safe for both NumPy and Dask
     tifffile.imwrite(
-        os.path.join(output_path, f'Slab1_composite_ch{channel}_{wanted_name}_wCrop_top{crop_top}_bottom{crop_bottom}_{num_scans}.tiff'),
+        os.path.join(output_path, f'Slab6_composite_ch{channel}_{wanted_name}_wCrop_top{crop_top}_bottom{crop_bottom}_{num_scans}.tiff'),
         arr16,
         bigtiff=True
 )
@@ -137,5 +159,7 @@ if __name__ == "__main__":
 
     stitch_z_plane(args.channel, args.z_index, args.processing, args.source_dir, args.output_path, args.crop_top, args.crop_bottom)      # crop is [387,5]
 
+
+    #python omehans_to_composites.py 1 400 transformed '/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab01/out_processed_z05/' '/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab01/out_composites/zopt400/' --crop_top 0 --crop_bottom 0
 
     # example use: python omehans_to_composites.py 0 500 'bg_subtracted' '/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_processed_bg_dec1/' '/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_composites/dec2/' --crop_top 387 --crop_bottom 5

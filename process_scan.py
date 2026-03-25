@@ -40,6 +40,8 @@ import sys
 import time
 from datetime import datetime
 from glob import glob
+import json
+from types import SimpleNamespace
 #import argparse
 
 import tifffile
@@ -51,6 +53,7 @@ import zarr
 from skimage.transform import resize
 from stack_to_multiscale_ngff.archived_nested_store import Archived_Nested_Store
 from stack_to_multiscale_ngff.h5_nested_store3 import H5_Nested_Store
+import base64
 
 # from utils.create_masks import get_chunks_with_background, get_chunks_with_bright_signal
 # from utils.settings import *
@@ -72,7 +75,11 @@ os.umask(0o007)
 
 NUCLEI_FLI = sys.argv[1] #nuclei_fli                  #/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/NPBB328-Cortex-Slab06-run002-z01-y001-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli.zst
 OUTPUT_DIR = sys.argv[2] #output_dir                  #/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_processed/NPBB328-Cortex-Slab06-run002-z01-y001-Exc-488nm-561nm-594nm-660nm_HiCAM FLUO_1875-ST-272.fli
+save_flags_json = sys.argv[3]
 
+save_flags_decoded = base64.b64decode(save_flags_json).decode()
+save_flags_load = json.loads(save_flags_decoded)
+save_flags = SimpleNamespace(**save_flags_load) 
 
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
@@ -106,14 +113,14 @@ def main():
         log.info(f"Nuclei processed already present at {NUCLEI_OUT}, skipping read.")
         NUCLEI_PROCESSED = NUCLEI_OUT
     else:
-        NUCLEI_PROCESSED = preprocess_nuclei(NUCLEI_FLI, NUCLEI_OUT)
+        NUCLEI_PROCESSED = preprocess_nuclei(NUCLEI_FLI, NUCLEI_OUT, save_flags)
         log.info(f"Preprocessing nuclei (BG → laser-correct) to {NUCLEI_PROCESSED}")
 
     if os.path.isdir(COLORS_OUT):
         log.info(f"Colors processed already present at {COLORS_OUT}, skipping read.")
         COLORS_PROCESSED = COLORS_OUT
     else:
-        COLORS_PROCESSED = preprocess_colors(COLORS_FLI, COLORS_OUT, NUCLEI_PROCESSED)
+        COLORS_PROCESSED = preprocess_colors(COLORS_FLI, COLORS_OUT, NUCLEI_PROCESSED, save_flags)
         log.info(f"Preprocessing colors (BG → laser-correct → split → register → unmix) to {COLORS_PROCESSED}")
 
 

@@ -473,6 +473,14 @@ def infer_z(path):
     if m2: return m2.group(1)
     raise ValueError(f"Cannot infer z from {path}")
 
+def infer_y(path):
+    m = re.search(r"-y(\d+)-", os.path.basename(path))
+    if m: return m.group(1)
+    # fallback: parent folder like ".../y03/"
+    m2 = re.search(r"corrections(\d+)", os.path.basename(os.path.dirname(path)))
+    if m2: return m2.group(1)
+    raise ValueError(f"Cannot infer y from {path}")
+
 EXC_RE = re.compile(r"[Ee]xc[-_]?(\d{3,4})\s*nm")
 
 def infer_laser_nm(path: str) -> str:

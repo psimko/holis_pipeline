@@ -178,3 +178,5 @@ if __name__ == "__main__":
     # example use: python omehans_to_tiffs.py 0 'bg_subtracted' 'True' '/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_processed/' '/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab6/out_tiffs_peter/'
 
     #python omehans_to_tiffs.py 1 'transformed' 'True' '/bil/proj/rf1hillman/results_peter/results_Slab7_test/out_processed/' '/bil/proj/rf1hillman/results_peter/results_Slab7_test/out_tiffs/transformed/'
+
+    #python omehans_to_tiffs.py 1 'transformed' 'True' '/bil/proj/rf1hillman/results/NPBB328_Cortex/Slab01/out_processed_y1toy10/' '/bil/proj/rf1hillman/results//bil/proj/rf1hillman/results/NPBB328_Cortex/Slab01/out_tiffs/transformed/'
